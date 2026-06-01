@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.chat import router as chat_router
 from app.api.diet import router as diet_router
 from app.api.payment import router as payment_router
+from app.api.workout import router as workout_router
 from app.database.session import init_db
 from contextlib import asynccontextmanager
 
@@ -37,6 +38,7 @@ app.add_middleware(
 app.include_router(chat_router, prefix="/api/chat", tags=["chat"])
 app.include_router(diet_router, prefix="/api/diet", tags=["diet"])
 app.include_router(payment_router, prefix="/api/payment", tags=["payment"])
+app.include_router(workout_router, prefix="/api/workout", tags=["workout"])
 
 @app.get("/")
 async def read_root():

@@ -285,3 +285,62 @@ class MemoryService:
             "medical_conditions": profile.medical_conditions or [],
             "metrics": latest_metrics,
         }
+
+    @staticmethod
+    async def prune_garbage_episodic_memory(user_id: str, db: AsyncSession) -> List[int]:
+        """
+        Agent 记忆自我净化与垃圾回收 (Garbage Collection)。
+        从数据库加载该用户的 Layer 3 近期事件流水，调用大模型识别无价值噪音并执行物理删除 (DELETE)。
+        """
+        from app.database.models import Events
+        from app.services.llm_client import llm_call_structured
+        from app.prompts import EPISODIC_MEMORY_GC_SYSTEM
+        from sqlalchemy import select, delete
+
+        # 1. 查询该用户最近的 30 条事件流水记录
+        stmt = select(Events).where(Events.user_id == user_id).order_by(desc(Events.recorded_at)).limit(30)
+        result = await db.execute(stmt)
+        events = result.scalars().all()
+
+        if not events:
+            return []
+
+        # 2. 序列化事件列表为大模型输入
+        serialized_events = []
+        for ev in events:
+            serialized_events.append({
+                "id": ev.id,
+                "type": ev.event_type,
+                "date": str(ev.event_date),
+                "payload": ev.payload
+            })
+
+        # 3. 调用大模型对近期记忆做检查，识别无长期参考健身价值的数据
+        user_prompt = f"当前待审查的 Layer 3 时序事件日志:\n{json.dumps(serialized_events, ensure_ascii=False)}"
+
+        try:
+            resp = await llm_call_structured(
+                system_prompt=EPISODIC_MEMORY_GC_SYSTEM,
+                user_prompt=user_prompt,
+                temperature=0.0,
+                max_tokens=1024
+            )
+            prune_ids = resp.get("prune_event_ids", [])
+
+            # 过滤以确保大模型返回的 ID 确实在这些事件里，防止大模型捏造/越界删除
+            valid_ids = [ev.id for ev in events]
+            ids_to_delete = [pid for pid in prune_ids if pid in valid_ids]
+
+            if ids_to_delete:
+                # 4. 执行物理删除 (DELETE)
+                del_stmt = delete(Events).where(Events.id.in_(ids_to_delete))
+                await db.execute(del_stmt)
+                await db.commit()
+                print(f"[Memory GC] Successfully compacted & pruned {len(ids_to_delete)} garbage events for user {user_id}. Deleted IDs: {ids_to_delete}")
+                return ids_to_delete
+
+        except Exception as e:
+            print(f"[Memory GC Error] Failed to run episodic memory garbage collection: {e}")
+
+        return []
+

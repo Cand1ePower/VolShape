@@ -125,6 +125,24 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         # Save bot response with Generative UI card payload
         await _save_message(user_id, session_id, "assistant", final_text, db, custom_card=ui_card)
 
+        # 🌟 每 10 次对话，都对近期记忆做检查把绝对没用的信息剔除 (Episodic Memory GC)
+        try:
+            from sqlalchemy import func
+            count_stmt = select(func.count(ConversationMessage.id)).where(
+                ConversationMessage.user_id == user_id
+            )
+            count_res = await db.execute(count_stmt)
+            msg_count = count_res.scalar() or 0
+
+            # 1轮交互包含2条记录(user & bot)。每满 10 次对话（20条消息）即精准触发一次
+            if msg_count > 0 and msg_count % 20 == 0:
+                from app.services.memory import MemoryService
+                # 采用非阻塞 asyncio 背景任务，保障 SSE 流吐字 100% 顺畅
+                asyncio.create_task(MemoryService.prune_garbage_episodic_memory(user_id, db))
+                print(f"[Memory GC Trigger] User {user_id} has reached {msg_count // 2} rounds. Firing episodic memory GC in background...")
+        except Exception as e:
+            print(f"[Memory GC Trigger Error] {e}")
+
         # Stream response
         chunk_size = 30
         for i in range(0, len(final_text), chunk_size):

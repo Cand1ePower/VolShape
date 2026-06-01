@@ -32,7 +32,7 @@ interface Message {
 // 自动检测不同平台下的本地服务 IP 地址
 const getBackendUrl = () => {
   if (Platform.OS === 'android') {
-    return 'http://10.0.2.2:8000/api/chat/stream';
+    return 'http://192.168.10.18:8000/api/chat/stream';
   }
   return 'http://localhost:8000/api/chat/stream';
 };
@@ -52,7 +52,7 @@ export default function ChatScreen() {
 
   // Auth
   const { token, userId, sessionId, isLoggedIn } = useAuth();
-  const { resetPlan } = usePlan();
+  const { resetPlan, syncWorkoutOnLogin } = usePlan();
 
   // Clear training plan and chat messages on logout
   useEffect(() => {
@@ -60,8 +60,10 @@ export default function ChatScreen() {
       resetPlan();
       setMessages([]);
       setAgentStatus(null);
+    } else {
+      syncWorkoutOnLogin();
     }
-  }, [isLoggedIn]);
+  }, [isLoggedIn, syncWorkoutOnLogin]);
 
   // Chat mode
   const [mode, setMode] = useState<'quick' | 'detailed'>('quick');
@@ -101,7 +103,7 @@ export default function ChatScreen() {
     }
     (async () => {
       try {
-        const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
+        const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.18:8000' : 'http://localhost:8000';
         const resp = await fetch(`${baseUrl}/api/chat/history?session_id=${sessionId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -229,22 +231,37 @@ export default function ChatScreen() {
 
   // 主题配色
   const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
-  const headerBg = isDark ? 'rgba(18, 18, 22, 0.85)' : 'rgba(255, 255, 255, 0.85)';
-  const borderCol = isDark ? '#1F1F24' : '#E5E5EA';
+  const headerBg = isDark ? 'rgba(10, 10, 12, 0.72)' : 'rgba(245, 245, 247, 0.75)';
+  const borderCol = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)';
   const textCol = isDark ? '#FFFFFF' : '#1C1C1E';
   const subTextCol = isDark ? '#8E8E93' : '#666666';
-  const inputBg = isDark ? '#1C1C21' : '#FFFFFF';
+  const inputBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
+  const botBubbleBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
 
   return (
     <SafeAreaView style={[styles.container, { backgroundColor: bgCol }]} edges={['top']}>
       {/* Header */}
-      <View style={[styles.header, { backgroundColor: headerBg, borderBottomColor: borderCol, paddingTop: Math.max(insets.top, 16) + (Platform.OS === 'web' ? 72 : 0) }]}>
+      <View style={[
+        styles.header, 
+        { 
+          backgroundColor: headerBg, 
+          borderBottomColor: borderCol, 
+          paddingTop: Math.max(insets.top, 12), // 🌟 移除 Web 下多余硬编码 72px，按 safeArea 响应式微调
+          ...Platform.select({
+            web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
+            default: {}
+          })
+        }
+      ]}>
         <View style={styles.headerRow}>
-          <View style={styles.statusDotWrap}>
-            <View style={[styles.statusDot, { backgroundColor: isGenerating ? '#34C759' : isLoggedIn ? '#007AFF' : '#AEAEB2' }]} />
-            <Text style={[styles.headerSubtitle, { color: subTextCol }]}>
-              {isGenerating ? '思考中...' : isLoggedIn ? '在线' : '未登录'}
-            </Text>
+          <View style={styles.headerLeft}>
+            <Text style={[styles.headerTitle, { color: textCol }]}>VolShape AI 教练</Text>
+            <View style={styles.headerSubtitleContainer}>
+              <View style={[styles.statusDot, { backgroundColor: isGenerating ? '#34C759' : isLoggedIn ? '#007AFF' : '#AEAEB2' }]} />
+              <Text style={[styles.headerSubtitle, { color: subTextCol }]}>
+                {isGenerating ? '思考中...' : isLoggedIn ? '在线' : '未登录'}
+              </Text>
+            </View>
           </View>
         </View>
       </View>
@@ -289,8 +306,28 @@ export default function ChatScreen() {
                   style={[
                     styles.bubble, 
                     msg.isBot 
-                      ? [styles.botBubble, { backgroundColor: isDark ? '#1C1C21' : '#E9E9EB', borderColor: borderCol }] 
-                      : [styles.userBubble, { backgroundColor: '#007AFF' }]
+                      ? [
+                          styles.botBubble, 
+                          { 
+                            backgroundColor: botBubbleBg, 
+                            borderColor: borderCol,
+                            ...Platform.select({
+                              web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
+                              default: {}
+                            })
+                          }
+                        ] 
+                      : [
+                          styles.userBubble, 
+                          { 
+                            backgroundColor: isDark ? 'rgba(0, 122, 255, 0.85)' : '#007AFF',
+                            shadowColor: '#007AFF',
+                            shadowOffset: { width: 0, height: 4 },
+                            shadowOpacity: 0.12,
+                            shadowRadius: 10,
+                            elevation: 2
+                          }
+                        ]
                   ]}
                 >
                   {msg.text ? (
@@ -331,14 +368,24 @@ export default function ChatScreen() {
           {/* Mode Toggle */}
           <View style={styles.modeToggle}>
             <TouchableOpacity activeOpacity={0.7} style={[styles.modeChip, mode === 'quick' && styles.modeChipActive]} onPress={() => setMode('quick')}>
-              <Text style={[styles.modeChipText, mode === 'quick' && styles.modeChipTextActive]}>⚡ 快速</Text>
+              <Text style={[styles.modeChipText, mode === 'quick' && styles.modeChipTextActive]}>快速模式</Text>
             </TouchableOpacity>
             <TouchableOpacity activeOpacity={0.7} style={[styles.modeChip, mode === 'detailed' && styles.modeChipActive]} onPress={() => setMode('detailed')}>
-              <Text style={[styles.modeChipText, mode === 'detailed' && styles.modeChipTextActive]}>🔍 详细</Text>
+              <Text style={[styles.modeChipText, mode === 'detailed' && styles.modeChipTextActive]}>专家模式</Text>
             </TouchableOpacity>
           </View>
 
-          <View style={[styles.inputWrapper, { backgroundColor: inputBg, borderColor: borderCol }]}>
+          <View style={[
+            styles.inputWrapper, 
+            { 
+              backgroundColor: inputBg, 
+              borderColor: borderCol,
+              ...Platform.select({
+                web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
+                default: {}
+              })
+            }
+          ]}>
             <TextInput
               style={[styles.textInput, { color: textCol, fontSize: dynamicFontSize }]}
               value={inputText}

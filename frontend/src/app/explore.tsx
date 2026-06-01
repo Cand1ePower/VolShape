@@ -37,8 +37,8 @@ export default function ExploreScreen() {
     setMemoryLoading(true);
     setMemoryModalVisible(true);
     try {
-      const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
-      const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}` } });
+      const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.18:8000' : 'http://localhost:8000';
+      const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
       const data = await response.json();
       setMemoryData(data);
     } catch (err) {
@@ -53,8 +53,8 @@ export default function ExploreScreen() {
     if (isLoggedIn && token) {
       (async () => {
         try {
-          const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
-          const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}` } });
+          const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.18:8000' : 'http://localhost:8000';
+          const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
           const data = await response.json();
           setMemoryData(data);
         } catch (err) {

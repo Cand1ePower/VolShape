@@ -51,6 +51,29 @@ export default function TrainScreen() {
   const { width } = useWindowDimensions();
   const { activePlan, completedExercises, toggleComplete, completePlan, resetPlan, trainingHistory } = usePlan();
 
+  const isSetPlayable = (exIdx: number, setIdx: number) => {
+    // 0-indexed 组打卡判断
+    if (setIdx === 0) {
+      // 第一组，永远可以点击。如果要取消，下一组必须为未打勾状态
+      if (completedExercises.has(`${exIdx}-0`)) {
+        return !completedExercises.has(`${exIdx}-1`);
+      }
+      return true;
+    }
+    
+    const prevKey = `${exIdx}-${setIdx - 1}`;
+    const currentKey = `${exIdx}-${setIdx}`;
+    const nextKey = `${exIdx}-${setIdx + 1}`;
+    
+    if (completedExercises.has(currentKey)) {
+      // 已经完成了。如果需要取消打勾，下一组必须是未完成状态
+      return !completedExercises.has(nextKey);
+    } else {
+      // 还没完成。如果需要点击打勾，前一组必须是已完成状态
+      return completedExercises.has(prevKey);
+    }
+  };
+
   const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
   const cardBg = isDark ? '#1C1C1E' : '#FFFFFF';
   const borderCol = isDark ? '#2C2C2E' : '#E5E5EA';
@@ -121,14 +144,23 @@ export default function TrainScreen() {
                   {Array.from({ length: exercise.sets }).map((_, setIdx) => {
                     const key = `${exIdx}-${setIdx}`;
                     const done = completedExercises.has(key);
+                    const playable = isSetPlayable(exIdx, setIdx);
+                    
                     return (
-                      <TouchableOpacity key={setIdx} activeOpacity={0.7} onPress={() => toggleComplete(exIdx, setIdx)}
+                      <TouchableOpacity 
+                        key={setIdx} 
+                        activeOpacity={playable ? 0.7 : 1} 
+                        disabled={!playable}
+                        onPress={() => toggleComplete(exIdx, setIdx)}
                         style={[styles.setChip, {
-                          borderColor: done ? successCol : borderCol,
-                          backgroundColor: done ? 'rgba(52, 199, 89, 0.15)' : 'transparent',
+                          borderColor: done ? successCol : playable ? borderCol : (isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
+                          backgroundColor: done 
+                            ? 'rgba(52, 199, 89, 0.15)' 
+                            : 'transparent',
+                          opacity: playable ? 1 : 0.35, // 未解锁灰度
                         }]}>
-                        <Text style={[styles.setChipText, { color: done ? successCol : subTextCol }]}>
-                          {done ? '✓' : '○'} 第{setIdx + 1}组
+                        <Text style={[styles.setChipText, { color: done ? successCol : playable ? textCol : subTextCol }]}>
+                          {!playable ? '🔒 ' : done ? '✓ ' : '○ '}第{setIdx + 1}组
                         </Text>
                       </TouchableOpacity>
                     );

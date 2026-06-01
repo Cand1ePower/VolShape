@@ -18,6 +18,7 @@ export interface WorkoutCardData {
   targetMuscles: string[];
   exercises: Exercise[];
   disclaimer?: string;
+  plan_id?: string; // 🌟 后端物理主键 plan_id
 }
 
 interface WorkoutCardProps {
@@ -27,7 +28,7 @@ interface WorkoutCardProps {
 export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
-  const { setActivePlan } = usePlan();
+  const { planStatusMap, applyWorkoutOnBackend } = usePlan();
 
   const cardBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
   const borderCol = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)';
@@ -36,8 +37,12 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
   const accentCol = '#007AFF';
   const accentBg = isDark ? 'rgba(0, 122, 255, 0.15)' : 'rgba(0, 122, 255, 0.08)';
 
-  const handleApply = () => {
-    setActivePlan({
+  const planId = data.plan_id;
+  const status = planId ? (planStatusMap[planId] || 'active') : 'active';
+
+  const handleApply = async () => {
+    if (!planId) return;
+    await applyWorkoutOnBackend(planId, {
       title: data.title || '今日训练计划',
       exercises: data.exercises.map(e => ({
         name: e.name,
@@ -130,11 +135,43 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
 
       {/* 交互回弹效果按钮 */}
       <TouchableOpacity 
-        activeOpacity={0.8}
-        style={[styles.applyButton, { backgroundColor: accentCol }]} 
+        activeOpacity={status === 'active' ? 0.8 : 1}
+        disabled={status !== 'active'}
+        style={[
+          styles.applyButton, 
+          { 
+            backgroundColor: status === 'active' 
+              ? accentCol 
+              : status === 'training'
+                ? (isDark ? 'rgba(0, 122, 255, 0.15)' : 'rgba(0, 122, 255, 0.08)')
+                : (isDark ? 'rgba(52, 199, 89, 0.15)' : 'rgba(52, 199, 89, 0.08)'),
+            borderColor: status === 'active'
+              ? 'transparent'
+              : status === 'training'
+                ? '#007AFF50'
+                : '#34C75950',
+            borderWidth: status === 'active' ? 0 : 1,
+            shadowOpacity: status === 'active' ? 0.3 : 0
+          }
+        ]} 
         onPress={handleApply}
       >
-        <Text style={styles.applyButtonText}>应用此计划并开始训练</Text>
+        <Text style={[
+          styles.applyButtonText, 
+          { 
+            color: status === 'active' 
+              ? '#FFFFFF' 
+              : status === 'training'
+                ? '#007AFF'
+                : '#34C759'
+          }
+        ]}>
+          {status === 'active' 
+            ? '应用此计划并开始训练' 
+            : status === 'training'
+              ? '应用中...'
+              : '已完成'}
+        </Text>
       </TouchableOpacity>
     </View>
   );

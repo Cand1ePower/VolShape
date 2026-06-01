@@ -1,5 +1,6 @@
 import json
 import asyncio
+import datetime
 from typing import Dict, Any, List
 from langgraph.graph import StateGraph, END
 from langchain_core.runnables import RunnableConfig
@@ -40,42 +41,44 @@ def _format_profile_for_prompt(profile: dict) -> str:
         parts.append(f"⚠️ 伤病/限制: {', '.join(profile['injuries'])}")
     if profile.get("medical_conditions"):
         parts.append(f"医疗状况: {', '.join(profile['medical_conditions'])}")
+        
     metrics = profile.get("metrics", {})
     if isinstance(metrics, dict):
         for key, val in metrics.items():
             if isinstance(val, dict):
                 parts.append(f"{key}: {val.get('value', '')}{val.get('unit', '')}")
-    # Add recent events summary
+                
+    # Add recent events summary (no training plans here, only somatic metrics/notes)
     recent = profile.get("_recent_events", [])
     if recent:
-        training_count = sum(1 for e in recent if e.get("type") == "training")
         diet_count = sum(1 for e in recent if e.get("type") == "diet")
-        if training_count:
-            parts.append(f"近期训练: 过去7天完成 {training_count} 次训练")
         if diet_count:
             parts.append(f"近期饮食记录: {diet_count} 条")
             
-    # Add recent plans history for continuous context reasoning
+    # 🌟 主动拉取该用户近5天训练计划物理数据库并注入大模型上下文
     recent_plans = profile.get("recent_plans", [])
     if recent_plans:
         plan_summaries = []
         for p in recent_plans:
             plan_json = p.get("plan_json", {})
-            title = plan_json.get("title", "今日训练计划")
+            title = plan_json.get("title", "今日训练")
+            status_label = "【已完成】" if p.get("status") == "completed" else "【未完成(应用进行中)】"
             exercises = plan_json.get("exercises", [])
-            ex_names = [e.get("name") for e in exercises if e.get("name")]
-            plan_summaries.append(f"[{p.get('target_date', '')} {title}包含动作: {', '.join(ex_names[:3])}]")
-        parts.append("近期已制定训练计划: " + " | ".join(plan_summaries))
+            ex_details = [f"{e.get('name')}({e.get('sets')}组)" for e in exercises if e.get("name")]
+            plan_summaries.append(f"- 日期: {p.get('target_date')} | 计划: {title} | 状态: {status_label} | 包含动作: {', '.join(ex_details)}")
+        parts.append("\n[用户近5天在独立数据库中应用并使用的训练计划数据(专表专用)]:\n" + "\n".join(plan_summaries) + "\n[近5天计划背景结束]\n")
 
     return "; ".join(parts) if parts else "新用户，无历史数据"
 
 
-async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession):
+async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession) -> str:
     from app.database.models import TrainingPlan
     import datetime
     import uuid
+    plan_id = str(uuid.uuid4())
+    plan_json["plan_id"] = plan_id  # 将物理 UUID 回填至 plan_json，使前端卡片渲染时能获取 plan_id
     new_plan = TrainingPlan(
-        id=str(uuid.uuid4()),
+        id=plan_id,
         user_id=user_id,
         plan_json=plan_json,
         target_date=datetime.date.today(),
@@ -83,6 +86,26 @@ async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession):
     )
     db.add(new_plan)
     await db.commit()
+    return plan_id
+
+
+def _format_history(history: List[Dict[str, Any]]) -> str:
+    if not history:
+        return ""
+    parts = []
+    for msg in history:
+        role = "用户" if msg.get("role") == "user" else "AI"
+        content = msg.get("content", "")
+        # 如果是 AI，且携带了卡片信息，我们将卡片里具体的动作和标题回填到对话历史中，让 AI 可以深刻感知
+        custom_card = msg.get("customCard")
+        card_info = ""
+        if custom_card and custom_card.get("type") == "workout_card":
+            ex_names = [e.get("name") for e in custom_card.get("exercises", []) if e.get("name")]
+            card_info = f"【系统生成的卡片: {custom_card.get('title')}，包含动作: {', '.join(ex_names)}】"
+            
+        parts.append(f"{role}: {content}{card_info}")
+        
+    return "\n[历史对话上下文]\n" + "\n".join(parts) + "\n[历史对话上下文结束]\n"
 
 
 async def _safe_llm_structured(system_prompt: str, user_prompt: str, temperature: float,
@@ -133,10 +156,12 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
     recent = [{"type": e.event_type, "date": str(e.event_date), "payload": e.payload} for e in reversed(result.scalars().all())]
     profile["_recent_events"] = recent
 
-    # Query recent 3 saved plans for LLM contextual continuity
+    # Query recent 5 days saved plans for LLM contextual continuity
+    five_days_ago = datetime.date.today() - datetime.timedelta(days=5)
     plan_stmt = select(TrainingPlan).where(
-        TrainingPlan.user_id == user_id
-    ).order_by(desc(TrainingPlan.target_date)).limit(3)
+        TrainingPlan.user_id == user_id,
+        TrainingPlan.target_date >= five_days_ago
+    ).order_by(desc(TrainingPlan.target_date))
     plan_result = await db.execute(plan_stmt)
     recent_plans = [
         {
@@ -159,10 +184,12 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
     profile_summary = _format_profile_for_prompt(user_profile)
+    history = state.get("conversation_history", [])
+    history_text = _format_history(history)
 
     result = await _safe_llm_structured(
         system_prompt=PLANNER_SYSTEM,
-        user_prompt=f"用户画像: {profile_summary}\n用户需求: {user_input}",
+        user_prompt=f"用户画像: {profile_summary}\n{history_text}\n用户需求: {user_input}",
         temperature=0.4,
         fallback={"plan_steps": [
             "Step 1: 全身关节热身与动态拉伸 (5-10分钟)",
@@ -184,6 +211,8 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     plan_steps = state.get("plan_steps", [])
     user_input = state.get("user_input", "")
     profile_summary = _format_profile_for_prompt(user_profile)
+    history = state.get("conversation_history", [])
+    history_text = _format_history(history)
 
     pr_weights = {}
     for mt in ["bench_press", "squat", "deadlift"]:
@@ -196,7 +225,7 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
 
     result = await _safe_llm_structured(
         system_prompt=QUICK_COMBINED_SYSTEM,
-        user_prompt=f"用户画像: {profile_summary}\nPR记录: {pr_text}\n训练策略: {json.dumps(plan_steps, ensure_ascii=False)}\n用户需求: {user_input}",
+        user_prompt=f"用户画像: {profile_summary}\nPR记录: {pr_text}\n{history_text}\n训练策略: {json.dumps(plan_steps, ensure_ascii=False)}\n用户需求: {user_input}",
         temperature=0.5,
         max_tokens=2048,
         fallback={
@@ -211,6 +240,7 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     final_response = result.get("final_response", "已为您准备好训练计划！")
     disclaimer = result.get("disclaimer", "如有疼痛请立即停止")
 
+    import uuid
     ui = {
         "type": "workout_card",
         "title": "今日训练计划（快速模式）",
@@ -218,11 +248,7 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
         "exercises": [{"name": e.get("name",""), "sets": e.get("sets",3), "reps": e.get("reps","10"), "weight": e.get("weight",""), "notes": e.get("notes","")} for e in exercises],
         "disclaimer": f"安全评分: {result.get('safety_score', 85)}/100。{disclaimer}",
     }
-    
-    try:
-        await _save_training_plan(user_id, ui, db)
-    except Exception as e:
-        print(f"[Error Saving Quick Plan] {e}")
+    ui["plan_id"] = str(uuid.uuid4()) # 🌟 仅在 UI 中携带临时 plan_id，数据库无物理写入
 
     return {"execution_results": {"exercises": exercises, "duration_minutes": result.get("duration_minutes", 40), "estimated_rpe": result.get("estimated_rpe", 5)}, "final_response": final_response, "ui_components": ui, "route": "end"}
 
@@ -238,6 +264,8 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     error_count = state.get("error_count", 0)
     corrector_feedback = state.get("corrector_feedback", "")
     profile_summary = _format_profile_for_prompt(user_profile)
+    history = state.get("conversation_history", [])
+    history_text = _format_history(history)
 
     pr_weights = {}
     for mt in ["bench_press", "squat", "deadlift"]:
@@ -249,7 +277,7 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     pr_text = ", ".join(f"{k}: {v}kg" for k, v in pr_weights.items()) if pr_weights else "无历史记录"
 
     sys = EXECUTOR_CORRECTION_SYSTEM if error_count > 0 else EXECUTOR_SYSTEM
-    user_msg = f"用户画像: {profile_summary}\nPR记录: {pr_text}\n训练策略: {json.dumps(plan_steps, ensure_ascii=False)}"
+    user_msg = f"用户画像: {profile_summary}\nPR记录: {pr_text}\n{history_text}\n训练策略: {json.dumps(plan_steps, ensure_ascii=False)}"
     if error_count > 0:
         user_msg += f"\n⚠️ 第 {error_count + 1} 次修正。修正指令: {corrector_feedback}"
 
@@ -348,37 +376,42 @@ async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str,
 # ═══════════════════════════════════════════════════════════════
 async def response_builder_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     intent = state.get("intent", "chat")
-    execution_results = state.get("execution_results", {})
+    execution_results = state.get("execution_results", {}) or {}
     reflection = state.get("reflection_result", {})
     exercises = execution_results.get("exercises", [])
+    if exercises is None:
+        exercises = []
+        
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
     profile_summary = _format_profile_for_prompt(user_profile)
     feedback = reflection.get("feedback", "")
     score = reflection.get("score", 85)
+    history = state.get("conversation_history", [])
+    history_text = _format_history(history)
 
     if intent == "training_plan":
-        sys, ctx = RESPONSE_TRAINING_SYSTEM, f"用户需求: {user_input}\n画像: {profile_summary}\n训练计划: {json.dumps([{'name': e['name'], 'sets': e.get('sets'), 'reps': e.get('reps'), 'weight': e.get('weight')} for e in exercises], ensure_ascii=False) if exercises else '无'}\n审查: {feedback} (评分: {score})"
+        sys, ctx = RESPONSE_TRAINING_SYSTEM, f"用户需求: {user_input}\n画像: {profile_summary}\n{history_text}\n训练计划: {json.dumps([{'name': e['name'], 'sets': e.get('sets'), 'reps': e.get('reps'), 'weight': e.get('weight')} for e in exercises], ensure_ascii=False) if exercises else '无'}\n审查: {feedback} (评分: {score})"
     elif intent == "diet_log":
-        sys, ctx = RESPONSE_DIET_SYSTEM, f"用户输入: {user_input}\n画像: {profile_summary}"
+        sys, ctx = RESPONSE_DIET_SYSTEM, f"用户输入: {user_input}\n画像: {profile_summary}\n{history_text}"
     elif intent == "profile_update":
-        sys, ctx = RESPONSE_PROFILE_SYSTEM, f"用户输入: {user_input}\n画像: {profile_summary}"
+        sys, ctx = RESPONSE_PROFILE_SYSTEM, f"用户输入: {user_input}\n画像: {profile_summary}\n{history_text}"
     else:
-        sys, ctx = RESPONSE_CHAT_SYSTEM, f"用户输入: {user_input}\n画像: {profile_summary}"
+        sys, ctx = RESPONSE_CHAT_SYSTEM, f"用户输入: {user_input}\n画像: {profile_summary}\n{history_text}"
 
     resp = await _safe_llm_structured(system_prompt=sys, user_prompt=ctx, temperature=0.7, max_tokens=512, fallback={"final_response": "已为您准备好！"})
     final_response = resp.get("final_response", "已为您准备好！")
 
     ui = None
-    if intent == "training_plan" and exercises:
+    if intent == "training_plan":
+        if not exercises:
+            exercises = [{"name": "全身关节活动与动态拉伸", "sets": 3, "reps": "12", "weight": "自重", "notes": "安全热身，唤醒全身体征"}]
+            
+        import uuid
         ui = {"type": "workout_card", "title": "今日训练计划（详细审查模式）", "targetMuscles": [],
               "exercises": [{"name": e.get("name",""), "sets": e.get("sets",3), "reps": e.get("reps","10"), "weight": e.get("weight",""), "notes": e.get("notes","")} for e in exercises],
               "disclaimer": f"安全评分: {score}/100。如有疼痛请立即停止。"}
-        try:
-            db = config["configurable"]["db"]
-            await _save_training_plan(state["user_id"], ui, db)
-        except Exception as e:
-            print(f"[Error Saving Detailed Plan] {e}")
+        ui["plan_id"] = str(uuid.uuid4()) # 🌟 仅在 UI 中携带临时 plan_id，数据库无物理写入
     elif intent == "diet_log":
         ui = state.get("ui_components")
     return {"final_response": final_response, "ui_components": ui, "route": "end"}

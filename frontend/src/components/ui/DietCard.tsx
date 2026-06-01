@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
 import { Image } from 'expo-image';
 import { useColorScheme } from 'react-native';
 
@@ -33,10 +33,10 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
   const isDark = scheme === 'dark';
 
   // 商业级高级主题配色 (Glassmorphism Dark-Vibe Theme)
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const borderCol = isDark ? '#323236' : '#EAEAEA';
+  const cardBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
+  const borderCol = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)';
   const textCol = isDark ? '#FFFFFF' : '#1C1C1E';
-  const subTextCol = isDark ? '#A1A1AA' : '#666666';
+  const subTextCol = isDark ? '#8E8E93' : '#666666';
 
   // 营养素科学标志色
   const proteinColor = '#FF3B30'; // 热情红 - 肌肉增长蛋白质
@@ -44,10 +44,10 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
   const fatColor = '#34C759';     // 健康绿 - 优质脂肪
 
   const mealNames = {
-    breakfast: '🌅 能量早餐',
-    lunch: '☀️ 丰盛午餐',
-    dinner: '🌙 饱腹晚餐',
-    snack: '🍎 营养加餐'
+    breakfast: '能量早餐',
+    lunch: '丰盛午餐',
+    dinner: '饱腹晚餐',
+    snack: '营养加餐'
   };
 
   // 💡 【商业化重构】杜绝硬编码！基于三大营养素真实克数，动态计算进度条占比，100% 真实联动！
@@ -58,18 +58,28 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
 
   const handleConfirm = () => {
     Alert.alert(
-      "🥗 饮食数据已记录",
-      `已成功同步今天的${mealNames[data.mealType]}至您的健康档案！\n\n🔥 总摄入热量：${data.totalCalories} kcal\n🥩 蛋白质总量：${data.totalProtein} g`,
+      "饮食数据已记录",
+      `已成功同步今天的${mealNames[data.mealType]}至您的健康档案！\n\n总摄入热量：${data.totalCalories} kcal\n蛋白质总量：${data.totalProtein} g`,
       [{ text: "好的", onPress: () => console.log("Diet confirmed") }]
     );
   };
 
   return (
-    <View style={[styles.card, { backgroundColor: cardBg, borderColor: borderCol }]}>
+    <View style={[
+      styles.card, 
+      { 
+        backgroundColor: cardBg, 
+        borderColor: borderCol,
+        ...Platform.select({
+          web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
+          default: {}
+        })
+      }
+    ]}>
       {/* 头部餐食与图片 */}
       <View style={styles.headerRow}>
         <View style={styles.headerInfo}>
-          <Text style={[styles.mealTitle, { color: textCol }]}>{mealNames[data.mealType] || '🍲 饮食记录'}</Text>
+          <Text style={[styles.mealTitle, { color: textCol }]}>{mealNames[data.mealType] || '饮食记录'}</Text>
           <Text style={[styles.calorieCount, { color: textCol }]}>
             {data.totalCalories} <Text style={styles.kcalUnit}>kcal</Text>
           </Text>
@@ -88,7 +98,7 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
       {/* 【核心联动组件】营养素动态进度条 */}
       <View style={styles.macroContainer}>
         <View style={styles.macroItem}>
-          <Text style={[styles.macroLabel, { color: subTextCol }]}>🥩 蛋白质</Text>
+          <Text style={[styles.macroLabel, { color: subTextCol }]}>蛋白质</Text>
           <Text style={[styles.macroValue, { color: proteinColor }]}>{data.totalProtein}g</Text>
           <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)' }]}>
             <View style={[styles.progressBarFill, { backgroundColor: proteinColor, width: proteinWidth }]} />
@@ -96,7 +106,7 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
         </View>
 
         <View style={styles.macroItem}>
-          <Text style={[styles.macroLabel, { color: subTextCol }]}>🍚 碳水</Text>
+          <Text style={[styles.macroLabel, { color: subTextCol }]}>碳水化合物</Text>
           <Text style={[styles.macroValue, { color: carbsColor }]}>{data.totalCarbs}g</Text>
           <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)' }]}>
             <View style={[styles.progressBarFill, { backgroundColor: carbsColor, width: carbsWidth }]} />
@@ -104,7 +114,7 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
         </View>
 
         <View style={styles.macroItem}>
-          <Text style={[styles.macroLabel, { color: subTextCol }]}>🥑 优质脂肪</Text>
+          <Text style={[styles.macroLabel, { color: subTextCol }]}>优质脂肪</Text>
           <Text style={[styles.macroValue, { color: fatColor }]}>{data.totalFat}g</Text>
           <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)' }]}>
             <View style={[styles.progressBarFill, { backgroundColor: fatColor, width: fatWidth }]} />
@@ -114,7 +124,7 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
 
       {/* 食物明细列表 */}
       <View style={styles.foodList}>
-        <Text style={[styles.listTitle, { color: textCol }]}>🧮 智能估算细则</Text>
+        <Text style={[styles.listTitle, { color: textCol }]}>智能估算细则</Text>
         <View style={styles.foodListWrapper}>
           {data.foodItems.map((item, idx) => (
             <View 
@@ -148,7 +158,7 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
         style={styles.confirmButton} 
         onPress={handleConfirm}
       >
-        <Text style={styles.confirmButtonText}>✅ 确认录入今日身体体征</Text>
+        <Text style={styles.confirmButtonText}>确认录入今日身体体征</Text>
       </TouchableOpacity>
     </View>
   );
@@ -156,15 +166,15 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 20,
-    borderWidth: 1.5,
+    borderRadius: 24,
+    borderWidth: 1,
     padding: 18,
     marginVertical: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 24,
+    elevation: 2,
     alignSelf: 'stretch',
   },
   headerRow: {

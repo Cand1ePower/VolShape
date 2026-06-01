@@ -54,9 +54,13 @@ export default function ChatScreen() {
   const { token, userId, sessionId, isLoggedIn } = useAuth();
   const { resetPlan } = usePlan();
 
-  // Clear training plan on logout
+  // Clear training plan and chat messages on logout
   useEffect(() => {
-    if (!isLoggedIn) resetPlan();
+    if (!isLoggedIn) {
+      resetPlan();
+      setMessages([]);
+      setAgentStatus(null);
+    }
   }, [isLoggedIn]);
 
   // Chat mode
@@ -108,6 +112,7 @@ export default function ChatScreen() {
             text: m.content,
             isBot: m.role === 'assistant',
             createdAt: new Date(),
+            customCard: m.customCard || undefined,
           })));
         } else {
           setMessages([{

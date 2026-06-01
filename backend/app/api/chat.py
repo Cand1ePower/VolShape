@@ -41,12 +41,32 @@ async def _load_history(user_id: str, session_id: str, db: AsyncSession) -> list
     ).order_by(ConversationMessage.created_at).limit(30)
     result = await db.execute(stmt)
     rows = result.scalars().all()
-    return [{"role": r.role, "content": r.content} for r in rows]
+    
+    messages = []
+    for r in rows:
+        try:
+            data = json.loads(r.content)
+            if isinstance(data, dict) and ("text" in data or "customCard" in data):
+                messages.append({
+                    "role": r.role,
+                    "content": data.get("text", ""),
+                    "customCard": data.get("customCard", None)
+                })
+                continue
+        except Exception:
+            pass
+        messages.append({"role": r.role, "content": r.content})
+    return messages
 
 
-async def _save_message(user_id: str, session_id: str, role: str, content: str, db: AsyncSession):
+async def _save_message(user_id: str, session_id: str, role: str, content: str, db: AsyncSession, custom_card: Optional[dict] = None):
+    if custom_card:
+        stored_content = json.dumps({"text": content, "customCard": custom_card}, ensure_ascii=False)
+    else:
+        stored_content = content
+        
     msg = ConversationMessage(id=str(uuid.uuid4()), user_id=user_id, session_id=session_id,
-                              role=role, content=content)
+                               role=role, content=stored_content)
     db.add(msg)
     await db.commit()
 
@@ -102,8 +122,8 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         final_text = final_state_snapshot.get("final_response", "已完成处理。")
         ui_card = final_state_snapshot.get("ui_components")
 
-        # Save bot response
-        await _save_message(user_id, session_id, "assistant", final_text, db)
+        # Save bot response with Generative UI card payload
+        await _save_message(user_id, session_id, "assistant", final_text, db, custom_card=ui_card)
 
         # Stream response
         chunk_size = 30

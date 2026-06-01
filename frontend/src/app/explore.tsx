@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   ScrollView, View, Text, StyleSheet, useColorScheme, Platform,
   TouchableOpacity, useWindowDimensions, Modal, ActivityIndicator, TextInput,
@@ -48,6 +48,24 @@ export default function ExploreScreen() {
     }
   };
 
+  // Automatically fetch metrics and profile in background when logged in
+  useEffect(() => {
+    if (isLoggedIn && token) {
+      (async () => {
+        try {
+          const baseUrl = Platform.OS === 'android' ? 'http://10.0.2.2:8000' : 'http://localhost:8000';
+          const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}` } });
+          const data = await response.json();
+          setMemoryData(data);
+        } catch (err) {
+          console.log('Background fetching profile failed:', err);
+        }
+      })();
+    } else {
+      setMemoryData(null);
+    }
+  }, [isLoggedIn, token]);
+
   return (
     <ScrollView style={{ backgroundColor: bgCol }} contentInset={insets} contentContainerStyle={[styles.scrollContent, {
       paddingTop: Platform.OS === 'android' ? insets.top + Spacing.two : Spacing.four,
@@ -76,7 +94,7 @@ export default function ExploreScreen() {
               </View>
             </View>
             {isLoggedIn ? (
-              <TouchableOpacity activeOpacity={0.7} style={styles.logoutBtn} onPress={logout}>
+              <TouchableOpacity activeOpacity={0.7} style={styles.logoutBtn} onPress={() => { logout(); setMemoryData(null); }}>
                 <Text style={styles.logoutBtnText}>退出</Text>
               </TouchableOpacity>
             ) : (
@@ -104,7 +122,28 @@ export default function ExploreScreen() {
         <View style={[styles.card, { backgroundColor: cardBg, borderColor: borderCol, padding: dynamicPadding }]}>
           <Text style={[styles.cardTitle, { color: textCol }]}>健康仪表盘</Text>
           <View style={styles.statGrid}>
-            {[{ label: '身高', val: '175', unit: 'cm' }, { label: '体重', val: '64.0', unit: 'kg' }, { label: '体脂', val: '17', unit: '%' }, { label: '目标', val: '减脂', unit: '' }].map((s, i) => (
+            {[
+              { 
+                label: '身高', 
+                val: memoryData?.profile?.height_cm ? String(memoryData.profile.height_cm) : '175', 
+                unit: 'cm' 
+              }, 
+              { 
+                label: '体重', 
+                val: memoryData?.profile?.metrics?.weight?.value ? String(memoryData.profile.metrics.weight.value) : '64.0', 
+                unit: 'kg' 
+              }, 
+              { 
+                label: '体脂', 
+                val: memoryData?.profile?.metrics?.body_fat?.value ? String(memoryData.profile.metrics.body_fat.value) : '17', 
+                unit: '%' 
+              }, 
+              { 
+                label: '目标', 
+                val: memoryData?.profile?.goal === 'cut' ? '减脂' : memoryData?.profile?.goal === 'bulk' ? '增肌' : memoryData?.profile?.goal === 'maintain' ? '维持' : memoryData?.profile?.goal === 'strength' ? '力量' : '新目标', 
+                unit: '' 
+              }
+            ].map((s, i) => (
               <View key={i} style={styles.statItem}>
                 <Text style={styles.statLabel}>{s.label}</Text>
                 <Text style={[styles.statVal, { color: textCol }]}>{s.val}<Text style={styles.statUnit}> {s.unit}</Text></Text>
@@ -125,12 +164,12 @@ export default function ExploreScreen() {
             <View style={{ gap: 10, marginBottom: 20 }}>
               <TouchableOpacity activeOpacity={0.7} style={[styles.presetBtn, { backgroundColor: isDark ? '#2C2C30' : '#F0F0F3' }]}
                 onPress={() => { login('test-user-vip-candlepw'); setLoginModalVisible(false); }}>
-                <Text style={[styles.presetBtnLabel, { color: textCol }]}>⭐ VIP</Text>
+                <Text style={[styles.presetBtnLabel, { color: textCol }]}>尊享 VIP 会员</Text>
                 <Text style={[styles.presetBtnId, { color: subTextCol }]}>test-user-vip-candlepw</Text>
               </TouchableOpacity>
               <TouchableOpacity activeOpacity={0.7} style={[styles.presetBtn, { backgroundColor: isDark ? '#2C2C30' : '#F0F0F3' }]}
                 onPress={() => { login('test-user-free-candlepw'); setLoginModalVisible(false); }}>
-                <Text style={[styles.presetBtnLabel, { color: textCol }]}>🆓 免费</Text>
+                <Text style={[styles.presetBtnLabel, { color: textCol }]}>标准免费用户</Text>
                 <Text style={[styles.presetBtnId, { color: subTextCol }]}>test-user-free-candlepw</Text>
               </TouchableOpacity>
             </View>
@@ -202,7 +241,7 @@ export default function ExploreScreen() {
               </View>
             )}
             <TouchableOpacity activeOpacity={0.7} style={{ margin: 14, paddingVertical: 14, borderRadius: 14, backgroundColor: '#007AFF', alignItems: 'center' }} onPress={fetchMemory}>
-              <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>🔄 刷新</Text>
+              <Text style={{ color: '#FFFFFF', fontWeight: '700' }}>刷新</Text>
             </TouchableOpacity>
           </View>
         </View>

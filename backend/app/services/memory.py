@@ -118,20 +118,50 @@ class MemoryService:
                 "action": "remove" if is_recovery else "add",
             })
 
-        # Event logging for non-query inputs
-        is_query = any(k in user_input_lower for k in ["计划", "安排", "定制", "设计", "怎么", "如何", "帮我", "想要", "求", "我想练"])
-
-        if not is_query and not extracted_items and any(kw in user_input_lower for kw in ["练", "吃", "卧推", "哑铃", "米饭", "鸡胸肉"]):
-            event_type = "training" if any(k in user_input_lower for k in ["练", "卧推", "哑铃"]) else "diet"
-            event = Events(
-                user_id=user_id,
-                event_type=event_type,
-                payload={"raw_input": user_input, "timestamp": datetime.datetime.utcnow().isoformat()},
-                event_date=datetime.date.today(),
-            )
-            db.add(event)
-            await db.flush()
-            return [{"key": "event", "value": event_type, "type": "event"}]
+        # Event logging with highly robust noise filtering (Layer 3 - Episodic Memory)
+        is_query_or_future = any(k in user_input_lower for k in [
+            "计划", "安排", "定制", "设计", "怎么", "如何", "帮我", "想要", "求", "我想练", 
+            "吗", "为什么", "什么时候", "有用吗", "建议", "咨询", "请教", "教我", "想知道",
+            "明天", "后天", "打算", "准备", "去不去", "可以吗", "要不要", "该不该"
+        ])
+        
+        is_negative = any(k in user_input_lower for k in [
+            "没练", "没有练", "不练", "断食", "戒", "没吃", "还没吃", "没有吃", "不吃", "别吃"
+        ])
+        
+        if not is_query_or_future and not is_negative and not extracted_items:
+            is_training_log = False
+            is_diet_log = False
+            
+            # 训练打卡特征过滤
+            training_action_kws = ["卧推", "深蹲", "硬拉", "俯卧撑", "引体向上", "跑步", "划船", "器械", "侧平举", "卷腹", "拉伸", "训练", "健身"]
+            has_training_kw = any(k in user_input_lower for k in training_action_kws)
+            has_training_done = any(k in user_input_lower for k in ["练了", "练完", "做完", "完成了", "打卡", "推了", "蹲了", "拉了", "跑了"])
+            has_volume_data = bool(re.search(r'\d+\s*(?:组|个|次|kg|公斤|公里|分钟|min)', user_input_lower))
+            
+            if has_training_kw and (has_training_done or has_volume_data):
+                is_training_log = True
+                
+            # 饮食打卡特征过滤
+            diet_kws = ["鸡胸", "蛋白粉", "鸡蛋", "牛肉", "米饭", "燕麦", "沙拉", "西蓝花", "香蕉", "红薯", "卡路里", "热量", "摄入", "脂肪", "蛋白质"]
+            has_diet_kw = any(k in user_input_lower for k in diet_kws)
+            has_diet_done = any(k in user_input_lower for k in ["吃了", "喝了", "摄入了", "吃完", "记录下"])
+            has_cal_data = bool(re.search(r'\d+\s*(?:g|克|千卡|卡|kcal)', user_input_lower))
+            
+            if has_diet_kw and (has_diet_done or has_cal_data):
+                is_diet_log = True
+                
+            if is_training_log or is_diet_log:
+                event_type = "training" if is_training_log else "diet"
+                event = Events(
+                    user_id=user_id,
+                    event_type=event_type,
+                    payload={"raw_input": user_input, "timestamp": datetime.datetime.utcnow().isoformat()},
+                    event_date=datetime.date.today(),
+                )
+                db.add(event)
+                await db.flush()
+                return [{"key": "event", "value": event_type, "type": "event"}]
 
         # LLM fallback for complex inputs
         if not extracted_items and _should_try_llm_extraction(user_input_lower):

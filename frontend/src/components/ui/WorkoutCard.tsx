@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
+import { View, Text, StyleSheet, TouchableOpacity, Platform } from 'react-native';
 import { useColorScheme } from 'react-native';
 import { usePlan } from '@/contexts/PlanContext';
 import { router } from 'expo-router';
@@ -29,10 +29,10 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
   const isDark = scheme === 'dark';
   const { setActivePlan } = usePlan();
 
-  const cardBg = isDark ? '#1E1E1E' : '#FFFFFF';
-  const borderCol = isDark ? '#323236' : '#EAEAEA';
+  const cardBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
+  const borderCol = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)';
   const textCol = isDark ? '#FFFFFF' : '#1C1C1E';
-  const subTextCol = isDark ? '#A1A1AA' : '#666666';
+  const subTextCol = isDark ? '#8E8E93' : '#666666';
   const accentCol = '#007AFF';
   const accentBg = isDark ? 'rgba(0, 122, 255, 0.15)' : 'rgba(0, 122, 255, 0.08)';
 
@@ -53,7 +53,17 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
   };
 
   return (
-    <View style={[styles.card, { backgroundColor: cardBg, borderColor: borderCol }]}>
+    <View style={[
+      styles.card, 
+      { 
+        backgroundColor: cardBg, 
+        borderColor: borderCol,
+        ...Platform.select({
+          web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
+          default: {}
+        })
+      }
+    ]}>
       {/* 头部：徽章与计划标题 */}
       <View style={styles.header}>
         <Text style={[styles.title, { color: textCol }]}>{data.title}</Text>
@@ -94,7 +104,7 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
             
             {item.weight && (
               <View style={styles.weightBadge}>
-                <Text style={styles.weightText}>⚖️ 推荐负荷: {item.weight}</Text>
+                <Text style={styles.weightText}>推荐负荷: {item.weight}</Text>
               </View>
             )}
 
@@ -113,7 +123,7 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
       {data.disclaimer && (
         <View style={[styles.disclaimerContainer, { backgroundColor: isDark ? 'rgba(255, 149, 0, 0.1)' : 'rgba(255, 149, 0, 0.05)' }]}>
           <Text style={[styles.disclaimerText, { color: '#FF9500' }]}>
-            🛡️ 运动防伤提醒：{data.disclaimer}
+            安全提示：{data.disclaimer}
           </Text>
         </View>
       )}
@@ -124,7 +134,7 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
         style={[styles.applyButton, { backgroundColor: accentCol }]} 
         onPress={handleApply}
       >
-        <Text style={styles.applyButtonText}>🔥 应用此计划并开始今天训练</Text>
+        <Text style={styles.applyButtonText}>应用此计划并开始训练</Text>
       </TouchableOpacity>
     </View>
   );
@@ -132,15 +142,15 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 20,
-    borderWidth: 1.5,
+    borderRadius: 24,
+    borderWidth: 1,
     padding: 18,
     marginVertical: 12,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.15,
-    shadowRadius: 16,
-    elevation: 4,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.06,
+    shadowRadius: 24,
+    elevation: 2,
     alignSelf: 'stretch',
   },
   header: {

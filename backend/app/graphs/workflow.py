@@ -10,6 +10,7 @@ from app.services.llm_client import llm_call_structured
 from app.services.tavily_search import search_exercise_info
 from app.database.models import UserMetrics
 from app.core.config import settings
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.prompts import (
     INTENT_CLASSIFIER_SYSTEM,
     PLANNER_SYSTEM,
@@ -53,8 +54,35 @@ def _format_profile_for_prompt(profile: dict) -> str:
             parts.append(f"近期训练: 过去7天完成 {training_count} 次训练")
         if diet_count:
             parts.append(f"近期饮食记录: {diet_count} 条")
+            
+    # Add recent plans history for continuous context reasoning
+    recent_plans = profile.get("recent_plans", [])
+    if recent_plans:
+        plan_summaries = []
+        for p in recent_plans:
+            plan_json = p.get("plan_json", {})
+            title = plan_json.get("title", "今日训练计划")
+            exercises = plan_json.get("exercises", [])
+            ex_names = [e.get("name") for e in exercises if e.get("name")]
+            plan_summaries.append(f"[{p.get('target_date', '')} {title}包含动作: {', '.join(ex_names[:3])}]")
+        parts.append("近期已制定训练计划: " + " | ".join(plan_summaries))
 
     return "; ".join(parts) if parts else "新用户，无历史数据"
+
+
+async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession):
+    from app.database.models import TrainingPlan
+    import datetime
+    import uuid
+    new_plan = TrainingPlan(
+        id=str(uuid.uuid4()),
+        user_id=user_id,
+        plan_json=plan_json,
+        target_date=datetime.date.today(),
+        status="active"
+    )
+    db.add(new_plan)
+    await db.commit()
 
 
 async def _safe_llm_structured(system_prompt: str, user_prompt: str, temperature: float,
@@ -98,12 +126,29 @@ async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> D
 async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
-    from app.database.models import Events as Evt
+    from app.database.models import Events as Evt, TrainingPlan
     profile = await MemoryService.retrieve_aggregated_profile(user_id, db)
     stmt = select(Evt).where(Evt.user_id == user_id).order_by(desc(Evt.event_date)).limit(50)
     result = await db.execute(stmt)
     recent = [{"type": e.event_type, "date": str(e.event_date), "payload": e.payload} for e in reversed(result.scalars().all())]
     profile["_recent_events"] = recent
+
+    # Query recent 3 saved plans for LLM contextual continuity
+    plan_stmt = select(TrainingPlan).where(
+        TrainingPlan.user_id == user_id
+    ).order_by(desc(TrainingPlan.target_date)).limit(3)
+    plan_result = await db.execute(plan_stmt)
+    recent_plans = [
+        {
+            "id": p.id,
+            "target_date": str(p.target_date),
+            "status": p.status,
+            "plan_json": p.plan_json
+        }
+        for p in plan_result.scalars().all()
+    ]
+    profile["recent_plans"] = recent_plans
+
     return {"user_profile": profile, "recent_events": recent}
 
 
@@ -173,6 +218,12 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
         "exercises": [{"name": e.get("name",""), "sets": e.get("sets",3), "reps": e.get("reps","10"), "weight": e.get("weight",""), "notes": e.get("notes","")} for e in exercises],
         "disclaimer": f"安全评分: {result.get('safety_score', 85)}/100。{disclaimer}",
     }
+    
+    try:
+        await _save_training_plan(user_id, ui, db)
+    except Exception as e:
+        print(f"[Error Saving Quick Plan] {e}")
+
     return {"execution_results": {"exercises": exercises, "duration_minutes": result.get("duration_minutes", 40), "estimated_rpe": result.get("estimated_rpe", 5)}, "final_response": final_response, "ui_components": ui, "route": "end"}
 
 
@@ -323,6 +374,11 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
         ui = {"type": "workout_card", "title": "今日训练计划（详细审查模式）", "targetMuscles": [],
               "exercises": [{"name": e.get("name",""), "sets": e.get("sets",3), "reps": e.get("reps","10"), "weight": e.get("weight",""), "notes": e.get("notes","")} for e in exercises],
               "disclaimer": f"安全评分: {score}/100。如有疼痛请立即停止。"}
+        try:
+            db = config["configurable"]["db"]
+            await _save_training_plan(state["user_id"], ui, db)
+        except Exception as e:
+            print(f"[Error Saving Detailed Plan] {e}")
     elif intent == "diet_log":
         ui = state.get("ui_components")
     return {"final_response": final_response, "ui_components": ui, "route": "end"}

@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { useColorScheme, Platform, View } from 'react-native';
+import { useColorScheme, Platform, View, ColorValue } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider } from '@/contexts/AuthContext';
@@ -7,7 +7,7 @@ import { PlanProvider } from '@/contexts/PlanContext';
 import { Colors } from '@/constants/theme';
 
 // 极致微光 Tab 选中态光圈容器
-function TabIcon({ name, focused, color, size = 24 }: { name: string; focused: boolean; color: string; size?: number }) {
+function TabIcon({ name, focused, color, size = 24 }: { name: string; focused: boolean; color: ColorValue; size?: number }) {
   if (focused) {
     return (
       <View style={{
@@ -23,7 +23,7 @@ function TabIcon({ name, focused, color, size = 24 }: { name: string; focused: b
     );
   }
   return (
-    <Ionicons name={`${name}-outline` as any} size={size + 2} color={color} />
+    <Ionicons name={`${name}-outline` as any} size={size + 2} color={String(color)} />
   );
 }
 
@@ -108,4 +108,3 @@ export default function TabLayout() {
     </AuthProvider>
   );
 }
-

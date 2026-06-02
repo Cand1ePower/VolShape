@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from 'react';
-import { Platform } from 'react-native';
 import { localDB } from '@/services/db';
+import { getBackendBaseUrl } from '@/services/api';
 import { useAuth } from './AuthContext';
 
 export interface PlanExercise {
@@ -67,8 +67,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
 
   // 获取后台 API URL 辅助器
   const getWorkoutUrl = (path: string) => {
-    const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
-    return `${baseUrl}${path}`;
+    return `${getBackendBaseUrl()}${path}`;
   };
 
   useEffect(() => {

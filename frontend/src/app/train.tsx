@@ -1,10 +1,11 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme, useWindowDimensions, Animated, Modal, ActivityIndicator } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme, useWindowDimensions, Animated, Modal, ActivityIndicator, Platform } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlan, CompletedPlan } from '@/contexts/PlanContext';
 import { useAuth } from '@/contexts/AuthContext';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
+import { getBackendBaseUrl } from '@/services/api';
 
 const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
@@ -173,7 +174,7 @@ export default function TrainScreen() {
     setIsLoadingAbandoned(true);
     setShowAbandonedModal(true);
     try {
-      const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
+      const baseUrl = getBackendBaseUrl();
       const resp = await fetch(`${baseUrl}/api/workout/abandoned_history`, {
         headers: { Authorization: `Bearer ${token}` }
       });

@@ -4,6 +4,7 @@ export interface ChatMessageRequest {
   user_input: string;
   session_id?: string;
   mode?: string;
+  use_training_sheet?: boolean;
 }
 
 export interface SSEHandlers {

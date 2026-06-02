@@ -4,15 +4,55 @@ import {
   TouchableOpacity, useWindowDimensions, Modal, ActivityIndicator, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import * as WebBrowser from 'expo-web-browser';
 import { useAuth } from '@/contexts/AuthContext';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { getBackendBaseUrl } from '@/services/api';
+
+const PLAN_CATALOG = [
+  {
+    id: 'free',
+    title: 'Free',
+    price: '¥0',
+    subtitle: '日常记录和轻量问答',
+    dailyMessages: 10,
+    monthlyQuota: '5 万',
+    features: ['快速模式', '训练表生成'],
+  },
+  {
+    id: 'monthly_vip',
+    tier: 'pro',
+    title: 'Pro',
+    price: '¥29/月',
+    subtitle: '更高频的训练与饮食规划',
+    dailyMessages: 100,
+    monthlyQuota: '100 万',
+    features: ['快速模式', '专家模式', '训练表生成'],
+  },
+  {
+    id: 'annual_vip',
+    tier: 'premium',
+    title: 'Premium',
+    price: '¥199/年',
+    subtitle: '高频使用和长期追踪',
+    dailyMessages: 500,
+    monthlyQuota: '500 万',
+    features: ['快速模式', '专家模式', '训练表生成', '周报'],
+  },
+] as const;
+
+const tierLabel = (tier?: string | null) => {
+  if (tier === 'premium') return 'Premium';
+  if (tier === 'pro') return 'Pro';
+  return 'Free';
+};
 
 export default function ExploreScreen() {
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
   const safeAreaInsets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { token, userId, isLoggedIn, login, logout } = useAuth();
+  const { token, userId, user, quota, isLoggedIn, login, register, logout, refreshMe } = useAuth();
 
   const insets = { ...safeAreaInsets, bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three };
   const isSmallScreen = width < 375;
@@ -26,19 +66,69 @@ export default function ExploreScreen() {
 
   // Login modal
   const [loginModalVisible, setLoginModalVisible] = useState(false);
-  const [devUserId, setDevUserId] = useState('test-user-vip-candlepw');
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authUsername, setAuthUsername] = useState('');
+  const [authError, setAuthError] = useState('');
+  const [authSubmitting, setAuthSubmitting] = useState(false);
 
   // Memory viewer modal
   const [memoryModalVisible, setMemoryModalVisible] = useState(false);
   const [memoryData, setMemoryData] = useState<any>(null);
   const [mem0Data, setMem0Data] = useState<any>(null);
   const [memoryLoading, setMemoryLoading] = useState(false);
+  const [plansVisible, setPlansVisible] = useState(false);
+  const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [checkoutError, setCheckoutError] = useState('');
+
+  const displayValue = (value: any) => {
+    if (!isLoggedIn) return '--';
+    if (value === null || value === undefined || value === '') return '--';
+    return String(value);
+  };
+
+  const goalLabel = (goal?: string | null) => {
+    if (!isLoggedIn || !goal) return '--';
+    if (goal === 'cut' || goal === 'fat_loss') return '减脂';
+    if (goal === 'bulk' || goal === 'muscle_gain') return '增肌';
+    if (goal === 'maintain') return '维持';
+    if (goal === 'strength') return '力量';
+    return goal;
+  };
+
+  const startCheckout = async (planId: string) => {
+    if (!isLoggedIn || !token) {
+      setPlansVisible(false);
+      setLoginModalVisible(true);
+      return;
+    }
+    setCheckoutError('');
+    setCheckoutLoading(planId);
+    try {
+      const baseUrl = getBackendBaseUrl();
+      const resp = await fetch(`${baseUrl}/api/payment/checkout?plan_id=${encodeURIComponent(planId)}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, Connection: 'close' },
+      });
+      const data = await resp.json();
+      if (!resp.ok) throw new Error(data.detail || data.message || '无法创建订阅订单');
+      if (data.checkout_url) {
+        await WebBrowser.openBrowserAsync(data.checkout_url);
+      }
+      await refreshMe();
+    } catch (e: any) {
+      setCheckoutError(e?.message || '订阅入口暂时不可用');
+    } finally {
+      setCheckoutLoading(null);
+    }
+  };
 
   const fetchMemory = async () => {
     setMemoryLoading(true);
     setMemoryModalVisible(true);
     try {
-      const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
+      const baseUrl = getBackendBaseUrl();
       const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
       const data = await response.json();
       setMemoryData(data);
@@ -53,12 +143,31 @@ export default function ExploreScreen() {
     }
   };
 
+  const submitAuth = async () => {
+    setAuthError('');
+    setAuthSubmitting(true);
+    try {
+      if (authMode === 'login') {
+        await login(authEmail, authPassword);
+      } else {
+        await register(authEmail, authPassword, authUsername || undefined);
+      }
+      setLoginModalVisible(false);
+      setAuthPassword('');
+      setAuthUsername('');
+    } catch (e: any) {
+      setAuthError(e?.message || '认证失败');
+    } finally {
+      setAuthSubmitting(false);
+    }
+  };
+
   // Automatically fetch metrics and profile in background when logged in
   useEffect(() => {
     if (isLoggedIn && token) {
       (async () => {
         try {
-          const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
+          const baseUrl = getBackendBaseUrl();
           const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
           const data = await response.json();
           setMemoryData(data);
@@ -92,20 +201,27 @@ export default function ExploreScreen() {
           <View style={styles.accountRow}>
             <View style={{ flex: 1 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-                <Text style={[styles.acId, { color: textCol }]} numberOfLines={1}>{isLoggedIn ? userId : '未登录'}</Text>
+                <Text style={[styles.acId, { color: textCol }]} numberOfLines={1}>
+                  {isLoggedIn ? (user?.email || userId) : '未登录'}
+                </Text>
                 {isLoggedIn && (
-                  <View style={[styles.statusBadge, { backgroundColor: userId?.includes('vip') ? 'rgba(255,215,0,0.15)' : 'rgba(0,122,255,0.1)' }]}>
-                    <Text style={[styles.statusBadgeText, { color: userId?.includes('vip') ? '#FFD700' : '#007AFF' }]}>
-                      {userId?.includes('vip') ? 'VIP' : 'Free'}
+                  <View style={[styles.statusBadge, { backgroundColor: quota?.tier === 'premium' ? 'rgba(255,149,0,0.15)' : quota?.tier === 'pro' ? 'rgba(88,86,214,0.14)' : 'rgba(0,122,255,0.1)' }]}>
+                    <Text style={[styles.statusBadgeText, { color: quota?.tier === 'premium' ? '#FF9500' : quota?.tier === 'pro' ? '#5856D6' : '#007AFF' }]}>
+                      {tierLabel(quota?.tier)}
                     </Text>
                   </View>
                 )}
               </View>
             </View>
             {isLoggedIn ? (
-              <TouchableOpacity activeOpacity={0.7} style={styles.logoutBtn} onPress={() => { logout(); setMemoryData(null); }}>
-                <Text style={styles.logoutBtnText}>退出</Text>
-              </TouchableOpacity>
+              <View style={styles.accountActions}>
+                <TouchableOpacity activeOpacity={0.7} style={styles.upgradeBtn} onPress={() => setPlansVisible(true)}>
+                  <Text style={styles.upgradeBtnText}>升级</Text>
+                </TouchableOpacity>
+                <TouchableOpacity activeOpacity={0.7} style={styles.logoutBtn} onPress={() => { logout(); setMemoryData(null); }}>
+                  <Text style={styles.logoutBtnText}>退出</Text>
+                </TouchableOpacity>
+              </View>
             ) : (
               <TouchableOpacity activeOpacity={0.7} style={styles.loginBtn} onPress={() => setLoginModalVisible(true)}>
                 <Text style={styles.loginBtnText}>登录</Text>
@@ -125,6 +241,54 @@ export default function ExploreScreen() {
           <Text style={[styles.memDesc, { color: subTextCol }]}>
             系统自动从你的对话中提取身体数据、训练能力、睡眠饮食等信息。点击查看 AI 记录的所有内容。
           </Text>
+          {isLoggedIn && quota && (
+            <TouchableOpacity activeOpacity={0.7} style={[styles.viewMemBtn, { alignSelf: 'flex-start', marginTop: 10 }]} onPress={refreshMe}>
+              <Text style={styles.viewMemBtnText}>
+                今日剩余 {quota.daily_messages_remaining}/{quota.daily_messages} · 本月剩余 {quota.monthly_quota_remaining}
+              </Text>
+            </TouchableOpacity>
+          )}
+        </View>
+
+        {/* Plan and Quota */}
+        <View style={[styles.card, { backgroundColor: cardBg, borderColor: borderCol, padding: dynamicPadding }]}>
+          <View style={styles.memHeaderRow}>
+            <View>
+              <Text style={[styles.cardTitle, { color: textCol }]}>套餐与额度</Text>
+              <Text style={[styles.planSubtitle, { color: subTextCol }]}>
+                当前等级：{isLoggedIn ? tierLabel(quota?.tier) : '--'}
+              </Text>
+            </View>
+            <TouchableOpacity activeOpacity={0.7} style={styles.viewMemBtn} onPress={() => setPlansVisible(true)}>
+              <Text style={styles.viewMemBtnText}>{isLoggedIn ? '查看方案' : '登录查看'}</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={styles.quotaGrid}>
+            <View style={styles.quotaItem}>
+              <Text style={styles.statLabel}>快速模式</Text>
+              <Text style={[styles.quotaVal, { color: textCol }]}>
+                {isLoggedIn && quota ? `${quota.daily_messages_remaining}/${quota.daily_messages}` : '--'}
+              </Text>
+            </View>
+            <View style={styles.quotaItem}>
+              <Text style={styles.statLabel}>专家模式</Text>
+              <Text style={[styles.quotaVal, { color: textCol }]}>
+                {isLoggedIn && quota?.features?.detailed ? '可用' : isLoggedIn ? '升级解锁' : '--'}
+              </Text>
+            </View>
+            <View style={styles.quotaItem}>
+              <Text style={styles.statLabel}>训练表</Text>
+              <Text style={[styles.quotaVal, { color: textCol }]}>
+                {isLoggedIn && quota?.features?.training_sheet ? '可用' : isLoggedIn ? '不可用' : '--'}
+              </Text>
+            </View>
+            <View style={styles.quotaItem}>
+              <Text style={styles.statLabel}>本月模型额度</Text>
+              <Text style={[styles.quotaVal, { color: textCol }]}>
+                {isLoggedIn && quota ? `${quota.monthly_quota_remaining}/${quota.monthly_quota_units}` : '--'}
+              </Text>
+            </View>
+          </View>
         </View>
 
         {/* Quick Stats */}
@@ -134,22 +298,22 @@ export default function ExploreScreen() {
             {[
               { 
                 label: '身高', 
-                val: memoryData?.profile?.height_cm ? String(memoryData.profile.height_cm) : '175', 
-                unit: 'cm' 
+                val: displayValue(memoryData?.profile?.height_cm), 
+                unit: isLoggedIn && memoryData?.profile?.height_cm ? 'cm' : '' 
               }, 
               { 
                 label: '体重', 
-                val: memoryData?.profile?.metrics?.weight?.value ? String(memoryData.profile.metrics.weight.value) : '64.0', 
-                unit: 'kg' 
+                val: displayValue(memoryData?.profile?.metrics?.weight?.value), 
+                unit: isLoggedIn && memoryData?.profile?.metrics?.weight?.value ? 'kg' : '' 
               }, 
               { 
                 label: '体脂', 
-                val: memoryData?.profile?.metrics?.body_fat?.value ? String(memoryData.profile.metrics.body_fat.value) : '17', 
-                unit: '%' 
+                val: displayValue(memoryData?.profile?.metrics?.body_fat?.value), 
+                unit: isLoggedIn && memoryData?.profile?.metrics?.body_fat?.value ? '%' : '' 
               }, 
               { 
                 label: '目标', 
-                val: memoryData?.profile?.goal === 'cut' ? '减脂' : memoryData?.profile?.goal === 'bulk' ? '增肌' : memoryData?.profile?.goal === 'maintain' ? '维持' : memoryData?.profile?.goal === 'strength' ? '力量' : '新目标', 
+                val: goalLabel(memoryData?.profile?.goal), 
                 unit: '' 
               }
             ].map((s, i) => (
@@ -168,30 +332,99 @@ export default function ExploreScreen() {
       <Modal animationType="slide" transparent visible={loginModalVisible} onRequestClose={() => setLoginModalVisible(false)}>
         <View style={styles.modalOverlay}>
           <View style={[styles.loginModal, { backgroundColor: cardBg, borderColor: borderCol }]}>
-            <Text style={[styles.loginTitle, { color: textCol }]}>登录</Text>
-            <Text style={[styles.loginSub, { color: subTextCol }]}>选择预设账号或输入自定义 ID</Text>
-            <View style={{ gap: 10, marginBottom: 20 }}>
-              <TouchableOpacity activeOpacity={0.7} style={[styles.presetBtn, { backgroundColor: isDark ? '#2C2C30' : '#F0F0F3' }]}
-                onPress={() => { login('test-user-vip-candlepw'); setLoginModalVisible(false); }}>
-                <Text style={[styles.presetBtnLabel, { color: textCol }]}>尊享 VIP 会员</Text>
-                <Text style={[styles.presetBtnId, { color: subTextCol }]}>test-user-vip-candlepw</Text>
+            <Text style={[styles.loginTitle, { color: textCol }]}>{authMode === 'login' ? '登录' : '创建账号'}</Text>
+            <Text style={[styles.loginSub, { color: subTextCol }]}>使用 VolShape 账号同步训练、记忆和模型额度</Text>
+            <View style={styles.authSwitch}>
+              <TouchableOpacity activeOpacity={0.7} style={[styles.authSwitchBtn, authMode === 'login' && styles.authSwitchBtnActive]} onPress={() => setAuthMode('login')}>
+                <Text style={[styles.authSwitchText, { color: authMode === 'login' ? '#FFFFFF' : subTextCol }]}>登录</Text>
               </TouchableOpacity>
-              <TouchableOpacity activeOpacity={0.7} style={[styles.presetBtn, { backgroundColor: isDark ? '#2C2C30' : '#F0F0F3' }]}
-                onPress={() => { login('test-user-free-candlepw'); setLoginModalVisible(false); }}>
-                <Text style={[styles.presetBtnLabel, { color: textCol }]}>标准免费用户</Text>
-                <Text style={[styles.presetBtnId, { color: subTextCol }]}>test-user-free-candlepw</Text>
+              <TouchableOpacity activeOpacity={0.7} style={[styles.authSwitchBtn, authMode === 'register' && styles.authSwitchBtnActive]} onPress={() => setAuthMode('register')}>
+                <Text style={[styles.authSwitchText, { color: authMode === 'register' ? '#FFFFFF' : subTextCol }]}>注册</Text>
               </TouchableOpacity>
             </View>
-            <Text style={[styles.loginDivider, { color: subTextCol }]}>—— 自定义 ——</Text>
+            {authMode === 'register' && (
+              <TextInput style={[styles.loginInput, { color: textCol, borderColor: borderCol, backgroundColor: isDark ? '#0A0A0C' : '#F5F5F7' }]}
+                value={authUsername} onChangeText={setAuthUsername} placeholder="昵称（可选）" placeholderTextColor={subTextCol} autoCapitalize="none" />
+            )}
             <TextInput style={[styles.loginInput, { color: textCol, borderColor: borderCol, backgroundColor: isDark ? '#0A0A0C' : '#F5F5F7' }]}
-              value={devUserId} onChangeText={setDevUserId} placeholder="输入 userId..." placeholderTextColor={subTextCol} />
-            <TouchableOpacity activeOpacity={0.7} style={styles.loginConfirmBtn}
-              onPress={() => { login(devUserId.startsWith('test-user-') ? devUserId : `test-user-${devUserId}`); setLoginModalVisible(false); }}>
-              <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 15 }}>确认登录</Text>
+              value={authEmail} onChangeText={setAuthEmail} placeholder="邮箱" placeholderTextColor={subTextCol} autoCapitalize="none" keyboardType="email-address" />
+            <TextInput style={[styles.loginInput, { color: textCol, borderColor: borderCol, backgroundColor: isDark ? '#0A0A0C' : '#F5F5F7' }]}
+              value={authPassword} onChangeText={setAuthPassword} placeholder="密码（至少 8 位）" placeholderTextColor={subTextCol} secureTextEntry />
+            {!!authError && <Text style={{ color: '#FF3B30', fontSize: 12, marginBottom: 12, textAlign: 'center' }}>{authError}</Text>}
+            <TouchableOpacity activeOpacity={0.7} style={[styles.loginConfirmBtn, { opacity: authSubmitting ? 0.7 : 1 }]} disabled={authSubmitting}
+              onPress={submitAuth}>
+              <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 15 }}>{authSubmitting ? '处理中...' : authMode === 'login' ? '确认登录' : '创建并登录'}</Text>
             </TouchableOpacity>
             <TouchableOpacity activeOpacity={0.7} onPress={() => setLoginModalVisible(false)} style={{ alignItems: 'center', paddingVertical: 8 }}>
               <Text style={{ color: '#007AFF', fontSize: 14 }}>取消</Text>
             </TouchableOpacity>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Subscription Modal */}
+      <Modal animationType="slide" transparent visible={plansVisible} onRequestClose={() => setPlansVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.plansModal, { backgroundColor: cardBg, borderColor: borderCol }]}>
+            <View style={styles.memModalHeader}>
+              <View>
+                <Text style={[styles.cardTitle, { color: textCol }]}>选择套餐</Text>
+                <Text style={[styles.planSubtitle, { color: subTextCol }]}>解锁更高额度、专家模式和长期追踪</Text>
+              </View>
+              <TouchableOpacity activeOpacity={0.7} style={[styles.closeCircle, { backgroundColor: isDark ? '#2C2C30' : '#E5E5EA' }]}
+                onPress={() => setPlansVisible(false)}>
+                <Text style={{ fontSize: 14, fontWeight: '700', color: textCol }}>×</Text>
+              </TouchableOpacity>
+            </View>
+            <ScrollView contentContainerStyle={styles.planList}>
+              {PLAN_CATALOG.map((plan) => {
+                const isCurrent = isLoggedIn && tierLabel(quota?.tier) === plan.title;
+                const isFree = plan.id === 'free';
+                return (
+                  <View key={plan.id} style={[styles.planCard, { borderColor: isCurrent ? '#007AFF' : borderCol, backgroundColor: isDark ? '#0A0A0C' : '#F8F8FA' }]}>
+                    <View style={styles.planTopRow}>
+                      <View>
+                        <Text style={[styles.planTitle, { color: textCol }]}>{plan.title}</Text>
+                        <Text style={[styles.planSubtitle, { color: subTextCol }]}>{plan.subtitle}</Text>
+                      </View>
+                      <Text style={[styles.planPrice, { color: textCol }]}>{plan.price}</Text>
+                    </View>
+                    <View style={styles.planMetaRow}>
+                      <Text style={[styles.planMeta, { color: subTextCol }]}>每日 {plan.dailyMessages} 次</Text>
+                      <Text style={[styles.planMeta, { color: subTextCol }]}>每月 {plan.monthlyQuota} 额度</Text>
+                    </View>
+                    <View style={styles.featureWrap}>
+                      {plan.features.map((feature) => (
+                        <View key={feature} style={styles.featurePill}>
+                          <Text style={styles.featurePillText}>{feature}</Text>
+                        </View>
+                      ))}
+                    </View>
+                    <TouchableOpacity
+                      activeOpacity={0.75}
+                      disabled={isCurrent || isFree || checkoutLoading === plan.id}
+                      style={[
+                        styles.planAction,
+                        {
+                          backgroundColor: isCurrent ? 'rgba(52,199,89,0.12)' : isFree ? 'rgba(142,142,147,0.16)' : '#007AFF',
+                        },
+                      ]}
+                      onPress={() => startCheckout(plan.id)}
+                    >
+                      <Text style={[
+                        styles.planActionText,
+                        { color: isCurrent ? '#34C759' : isFree ? subTextCol : '#FFFFFF' },
+                      ]}>
+                        {isCurrent ? '当前套餐' : isFree ? '基础方案' : checkoutLoading === plan.id ? '正在创建订单...' : '订阅'}
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
+              {!!checkoutError && (
+                <Text style={styles.checkoutError}>{checkoutError}</Text>
+              )}
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -282,6 +515,7 @@ const styles = StyleSheet.create({
   cardTitle: { fontWeight: 'bold', fontSize: 14, marginBottom: 8 },
   // Account
   accountRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  accountActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   acLabel: { fontSize: 10, marginBottom: 3 },
   acId: { fontSize: 11, fontWeight: '600', fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }), marginBottom: 6 },
   acMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
@@ -290,6 +524,8 @@ const styles = StyleSheet.create({
   acMetaText: { fontSize: 9 },
   loginBtn: { backgroundColor: '#007AFF', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 },
   loginBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
+  upgradeBtn: { backgroundColor: '#007AFF', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
+  upgradeBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
   logoutBtn: { backgroundColor: 'rgba(255,59,48,0.08)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.2)', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 },
   logoutBtnText: { color: '#FF3B30', fontWeight: '700', fontSize: 12 },
   // Memory
@@ -297,6 +533,10 @@ const styles = StyleSheet.create({
   viewMemBtn: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 6, backgroundColor: 'rgba(0,122,255,0.06)' },
   viewMemBtnText: { color: '#007AFF', fontSize: 11, fontWeight: '600' },
   memDesc: { fontSize: 11, lineHeight: 18 },
+  planSubtitle: { fontSize: 11, lineHeight: 16 },
+  quotaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  quotaItem: { flex: 1, minWidth: '44%', padding: 10, backgroundColor: 'rgba(88,86,214,0.05)', borderRadius: 9 },
+  quotaVal: { fontWeight: '800', fontSize: 14, marginTop: 3 },
   // Stats
   statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   statItem: { flex: 1, minWidth: '44%', padding: 8, backgroundColor: 'rgba(0,122,255,0.03)', borderRadius: 8 },
@@ -314,6 +554,24 @@ const styles = StyleSheet.create({
   loginDivider: { textAlign: 'center', fontSize: 12, marginBottom: 18 },
   loginInput: { borderWidth: 1, borderRadius: 14, padding: 14, fontSize: 14, marginBottom: 14, fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }) },
   loginConfirmBtn: { borderRadius: 16, paddingVertical: 16, alignItems: 'center', backgroundColor: '#007AFF', marginBottom: 10 },
+  authSwitch: { flexDirection: 'row', backgroundColor: 'rgba(142,142,147,0.12)', borderRadius: 12, padding: 3, marginBottom: 16 },
+  authSwitchBtn: { flex: 1, alignItems: 'center', paddingVertical: 8, borderRadius: 9 },
+  authSwitchBtnActive: { backgroundColor: '#007AFF' },
+  authSwitchText: { fontSize: 12, fontWeight: '700' },
+  plansModal: { width: '100%', maxWidth: 680, maxHeight: '84%', borderRadius: 24, borderWidth: 0.5, overflow: 'hidden' },
+  planList: { padding: 16, gap: 12 },
+  planCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 12 },
+  planTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
+  planTitle: { fontSize: 18, fontWeight: '800' },
+  planPrice: { fontSize: 18, fontWeight: '900' },
+  planMetaRow: { flexDirection: 'row', gap: 8, flexWrap: 'wrap' },
+  planMeta: { fontSize: 11, fontWeight: '600' },
+  featureWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  featurePill: { paddingVertical: 4, paddingHorizontal: 8, borderRadius: 8, backgroundColor: 'rgba(0,122,255,0.1)' },
+  featurePillText: { color: '#007AFF', fontSize: 10, fontWeight: '700' },
+  planAction: { borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  planActionText: { fontSize: 13, fontWeight: '800' },
+  checkoutError: { color: '#FF3B30', fontSize: 12, textAlign: 'center', marginTop: 2 },
   memoryModal: { width: '100%', maxWidth: 680, height: '82%', borderRadius: 24, borderWidth: 0.5, overflow: 'hidden' },
   memModalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, borderBottomWidth: 0.5, borderBottomColor: '#2C2C2E' },
   closeCircle: { width: 32, height: 32, borderRadius: 16, justifyContent: 'center', alignItems: 'center' },

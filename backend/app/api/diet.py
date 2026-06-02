@@ -31,6 +31,8 @@ async def analyze_diet(
             system_prompt=DIET_ANALYSIS_SYSTEM,
             user_prompt=f"餐食描述: {request.description}\n餐别: {request.meal_type}",
             temperature=0.2,
+            user_id=user_id,
+            db=db,
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"营养分析失败: {str(e)}")

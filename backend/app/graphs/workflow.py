@@ -112,11 +112,15 @@ def _format_history(history: List[Dict[str, Any]]) -> str:
 
 
 async def _safe_llm_structured(system_prompt: str, user_prompt: str, temperature: float,
-                               fallback: dict, max_tokens: int = 1024) -> dict:
+                               fallback: dict, max_tokens: int = 1024,
+                               user_id: str | None = None,
+                               db: AsyncSession | None = None,
+                               session_id: str | None = None) -> dict:
     try:
         return await llm_call_structured(
             system_prompt=system_prompt, user_prompt=user_prompt,
             temperature=temperature, max_tokens=max_tokens,
+            user_id=user_id, db=db, session_id=session_id,
         )
     except Exception as e:
         print(f"[LLM Fallback] {e}")
@@ -139,6 +143,9 @@ async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> D
         temperature=0.0,
         max_tokens=128,
         fallback={"intent": "chat"},
+        user_id=user_id,
+        db=db,
+        session_id=state.get("session_id"),
     )
     intent = result.get("intent", "chat")
     if intent not in ("training_plan", "diet_log", "profile_update", "chat"):
@@ -184,6 +191,8 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
 # 3. Planner
 # ═══════════════════════════════════════════════════════════════
 async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
+    db = config["configurable"]["db"]
+    user_id = state["user_id"]
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
     mem0_context = state.get("mem0_context", "")
@@ -201,6 +210,9 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
             "Step 3: 辅助孤立动作训练",
             "Step 4: 整理拉伸与泡沫轴放松 (5分钟)",
         ]},
+        user_id=user_id,
+        db=db,
+        session_id=state.get("session_id"),
     )
     return {"plan_steps": result.get("plan_steps", [])}
 
@@ -239,6 +251,9 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
             "final_response": "已为您生成快速训练计划，请查看下方卡片。",
             "disclaimer": "如有疼痛请立即停止",
         },
+        user_id=user_id,
+        db=db,
+        session_id=state.get("session_id"),
     )
 
     exercises = result.get("exercises", [])
@@ -292,6 +307,9 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     result = await _safe_llm_structured(
         system_prompt=sys, user_prompt=user_msg, temperature=0.5,
         fallback={"exercises": [{"name": "动态拉伸", "sets": 3, "reps": "15", "weight": "0kg", "notes": "安全热身"}], "duration_minutes": 20, "estimated_rpe": 2},
+        user_id=user_id,
+        db=db,
+        session_id=state.get("session_id"),
     )
 
     exercises = result.get("exercises", [])
@@ -339,6 +357,9 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
         user_prompt=f"用户画像: {profile_summary}\n训练计划:\n{exercises_text}\nACWR: {acwr_result['acwr']}, 风险等级: {acwr_result['risk']}\n当前重试次数: {error_count}",
         temperature=0.2, max_tokens=1536,
         fallback={"score": 85, "feedback": "自动审查通过", "risk": "low"},
+        user_id=user_id,
+        db=db,
+        session_id=state.get("session_id"),
     )
 
     score = review.get("score", 85)
@@ -362,6 +383,8 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
 # 7. Corrector (仅详细模式)
 # ═══════════════════════════════════════════════════════════════
 async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
+    db = config["configurable"]["db"]
+    user_id = state["user_id"]
     error_count = state.get("error_count", 0) + 1
     feedback = state.get("reflection_result", {}).get("feedback", "")
     exercises = state.get("execution_results", {}).get("exercises", [])
@@ -371,6 +394,9 @@ async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str,
         user_prompt=f"评估反馈: {feedback}\n当前计划: {json.dumps(exercises, ensure_ascii=False)}",
         temperature=0.3, max_tokens=1024,
         fallback={"correction_summary": "降为主动恢复拉伸日", "specific_actions": [], "safety_override": True},
+        user_id=user_id,
+        db=db,
+        session_id=state.get("session_id"),
     )
 
     combined = f"【第{error_count}次修正】{correction.get('correction_summary', '')}"
@@ -383,6 +409,8 @@ async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str,
 # 8. Response Builder (仅详细模式)
 # ═══════════════════════════════════════════════════════════════
 async def response_builder_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
+    db = config["configurable"]["db"]
+    user_id = state["user_id"]
     intent = state.get("intent", "chat")
     execution_results = state.get("execution_results", {}) or {}
     reflection = state.get("reflection_result", {})
@@ -408,7 +436,11 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     else:
         sys, ctx = RESPONSE_CHAT_SYSTEM, f"用户输入: {user_input}\n画像: {profile_summary}\n{history_text}"
 
-    resp = await _safe_llm_structured(system_prompt=sys, user_prompt=ctx, temperature=0.7, max_tokens=512, fallback={"final_response": "已为您准备好！"})
+    resp = await _safe_llm_structured(
+        system_prompt=sys, user_prompt=ctx, temperature=0.7, max_tokens=512,
+        fallback={"final_response": "已为您准备好！"},
+        user_id=user_id, db=db, session_id=state.get("session_id"),
+    )
     final_response = resp.get("final_response", "已为您准备好！")
 
     use_sheet = state.get("use_training_sheet", False)

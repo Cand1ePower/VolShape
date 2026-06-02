@@ -4,11 +4,14 @@ Uses langfuse.openai.AsyncOpenAI when Langfuse is configured for auto-tracing.
 Falls back to vanilla openai.AsyncOpenAI otherwise.
 """
 import json
+import os
+import time
 from typing import Any, Dict, List, Optional
 from app.core.config import settings
+from sqlalchemy.ext.asyncio import AsyncSession
 
 _AsyncOpenAI = None
-_client = None
+_clients: Dict[str, Any] = {}
 
 
 def _get_async_openai_class():
@@ -32,17 +35,19 @@ def _get_async_openai_class():
     return _AsyncOpenAI
 
 
-def get_openai_client():
-    global _client
-    if _client is None:
+def get_openai_client(api_key: Optional[str] = None, base_url: Optional[str] = None):
+    key = api_key or settings.DEEPSEEK_API_KEY
+    url = base_url or settings.DEEPSEEK_BASE_URL
+    cache_key = f"{url}|{key[-8:] if key else ''}"
+    if cache_key not in _clients:
         cls = _get_async_openai_class()
-        _client = cls(
-            api_key=settings.DEEPSEEK_API_KEY,
-            base_url=settings.DEEPSEEK_BASE_URL,
+        _clients[cache_key] = cls(
+            api_key=key,
+            base_url=url,
             timeout=30.0,
             max_retries=1,
         )
-    return _client
+    return _clients[cache_key]
 
 
 async def llm_call(
@@ -53,8 +58,21 @@ async def llm_call(
     max_tokens: int = 2048,
     response_format: Optional[Dict[str, str]] = None,
     trace_name: str = "llm_call",
+    user_id: Optional[str] = None,
+    db: Optional[AsyncSession] = None,
+    session_id: Optional[str] = None,
 ) -> str:
-    client = get_openai_client()
+    base_url = settings.DEEPSEEK_BASE_URL
+    api_key = settings.DEEPSEEK_API_KEY
+    newapi_token = None
+
+    if user_id and db and settings.NEWAPI_BASE_URL and os.getenv("TESTING") != "1":
+        from app.services.newapi import NewApiService
+
+        api_key, newapi_token = await NewApiService.get_api_key_for_user(user_id, db)
+        base_url = f"{settings.NEWAPI_BASE_URL.rstrip('/')}/v1"
+
+    client = get_openai_client(api_key=api_key, base_url=base_url)
     model = model or settings.LLM_LIGHT_MODEL
 
     kwargs: Dict[str, Any] = {
@@ -73,8 +91,45 @@ async def llm_call(
     # We just need to set langfuse_observation_id in extra_headers if needed
     # For auto-tracing, nothing extra is needed — it just works.
 
-    response = await client.chat.completions.create(**kwargs)
-    return response.choices[0].message.content.strip()
+    start = time.perf_counter()
+    try:
+        response = await client.chat.completions.create(**kwargs)
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        usage = getattr(response, "usage", None)
+        prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
+        completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
+        request_id = getattr(response, "id", None)
+        if user_id and db:
+            from app.services.quota import QuotaService
+
+            await QuotaService.record_llm_request(
+                user_id=user_id,
+                db=db,
+                model=model,
+                newapi_token=newapi_token,
+                session_id=session_id,
+                status_value="success",
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                latency_ms=latency_ms,
+                request_id=request_id,
+            )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        if user_id and db:
+            from app.services.quota import QuotaService
+
+            await QuotaService.record_llm_request(
+                user_id=user_id,
+                db=db,
+                model=model,
+                newapi_token=newapi_token,
+                session_id=session_id,
+                status_value="error",
+                error_code=e.__class__.__name__,
+                latency_ms=int((time.perf_counter() - start) * 1000),
+            )
+        raise
 
 
 async def llm_call_structured(
@@ -83,6 +138,9 @@ async def llm_call_structured(
     model: Optional[str] = None,
     temperature: float = 0.3,
     max_tokens: int = 2048,
+    user_id: Optional[str] = None,
+    db: Optional[AsyncSession] = None,
+    session_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     text = await llm_call(
         system_prompt=system_prompt,
@@ -92,5 +150,8 @@ async def llm_call_structured(
         max_tokens=max_tokens,
         response_format={"type": "json_object"},
         trace_name="llm_call_structured",
+        user_id=user_id,
+        db=db,
+        session_id=session_id,
     )
     return json.loads(text)

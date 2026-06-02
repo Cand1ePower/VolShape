@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.database.models import ConversationMessage
 from app.graphs.workflow import app_workflow
+from app.services.quota import QuotaService
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, delete
 
@@ -108,7 +109,6 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
     # Save user message to mem0 memory async
     try:
         from app.services.mem0_client import add_memory_async, search_memory_async
-        import asyncio
         asyncio.create_task(add_memory_async([{"role": "user", "content": user_input}], user_id))
         
         # Retrieve context from mem0 for the current prompt
@@ -187,6 +187,8 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
 @router.post("/stream")
 async def chat_stream(request: ChatRequest, user_id: str = Depends(get_current_user_id),
                       db: AsyncSession = Depends(get_db)):
+    await QuotaService.assert_can_chat(user_id, db, request.mode or "quick")
+    await QuotaService.increment_message(user_id, db)
     return EventSourceResponse(
         live_agent_stream(request.user_input, user_id, request.mode or "quick",
                           request.session_id or "default_session", db, request.use_training_sheet or False),

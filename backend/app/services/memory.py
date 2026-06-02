@@ -22,6 +22,8 @@ async def _llm_extract_memory(user_input: str, user_id: str, db: AsyncSession) -
         user_prompt=f"用户输入: {user_input}",
         temperature=0.0,
         max_tokens=512,
+        user_id=user_id,
+        db=db,
     )
     return result.get("extracted", [])
 
@@ -80,7 +82,7 @@ class MemoryService:
                 db.add(profile)
                 await db.flush()
 
-            if item["type"] == "profile":
+            if item["type"] == "profile" or key in CORE_PROFILE_KEYS:
                 old_val = getattr(profile, key, None)
                 if old_val != val:
                     setattr(profile, key, val)
@@ -220,7 +222,9 @@ class MemoryService:
                 system_prompt=EPISODIC_MEMORY_GC_SYSTEM,
                 user_prompt=user_prompt,
                 temperature=0.0,
-                max_tokens=1024
+                max_tokens=1024,
+                user_id=user_id,
+                db=db,
             )
             prune_ids = resp.get("prune_event_ids", [])
 
@@ -240,4 +244,3 @@ class MemoryService:
             print(f"[Memory GC Error] Failed to run episodic memory garbage collection: {e}")
 
         return []
-

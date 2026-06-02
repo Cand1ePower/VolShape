@@ -25,6 +25,7 @@ import { usePlan } from '../contexts/PlanContext';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from 'expo-router';
+import { getBackendBaseUrl } from '@/services/api';
 
 // 自定义商业级 Message 强类型结构
 interface Message {
@@ -36,12 +37,7 @@ interface Message {
 }
 
 // 自动检测不同平台下的本地服务 IP 地址
-const getBackendUrl = () => {
-  if (Platform.OS === 'android') {
-    return 'http://192.168.10.7:8000/api/chat/stream';
-  }
-  return 'http://localhost:8000/api/chat/stream';
-};
+const getBackendUrl = () => `${getBackendBaseUrl()}/api/chat/stream`;
 
 export default function ChatScreen() {
   const scheme = useColorScheme();
@@ -79,7 +75,7 @@ export default function ChatScreen() {
   const sheetAnim = useRef(new Animated.Value(1)).current; // 0=expanded 1=collapsed (default 1, collapsed)
   const capsuleAnim = useRef(new Animated.Value(0)).current; // 0=quick 1=detailed
 
-  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const navigation = useNavigation();
 
   // Scroll visibility for Tab Bar
@@ -87,38 +83,33 @@ export default function ChatScreen() {
   const lastScrollY = useRef(0);
   const tabBarTranslateAnim = useRef(new Animated.Value(0)).current;
 
-  // 键盘避让自适应状态与 refs
-  const keyboardOffset = useRef(new Animated.Value(0)).current;
-  const containerHeight = useRef(0);
-  const currentResizeHeight = useRef(0);
-  const activeKeyboardHeight = useRef(0);
-  const lastHeight = useRef(0); // 记录上一次布局高度以侦测单调性高度恢复
+  // Keep keyboard movement to one animated value. Mixing layout-height probes
+  // with keyboard events makes the input fight the system resize on Android.
+  const keyboardLift = useRef(new Animated.Value(0)).current;
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
-  const [thinkingSteps, setThinkingSteps] = useState<{ node: string; message: string; timestamp: Date }[]>([]);
+  const [processingMessage, setProcessingMessage] = useState('正在处理用户信息...');
+  const floatingBaseBottom = Platform.OS === 'ios' ? 80 : 62;
+  const keyboardGap = Platform.OS === 'ios' ? 8 : 42;
 
-  // 统一的键盘避让差额校准平移动画
-  const adjustKeyboardOffset = useCallback((duration = 220) => {
-    // 补足平移量 = 键盘总高度 - 布局已 resize 顶起的高度
-    const targetOffset = Math.max(0, activeKeyboardHeight.current - currentResizeHeight.current);
-    
-    Animated.timing(keyboardOffset, {
-      toValue: targetOffset,
-      duration: duration,
-      easing: Easing.out(Easing.cubic),
+  const animateKeyboardLift = useCallback((toValue: number, duration = 240) => {
+    keyboardLift.stopAnimation();
+    Animated.timing(keyboardLift, {
+      toValue,
+      duration,
+      easing: Easing.out(Easing.quad),
       useNativeDriver: true,
     }).start();
-  }, [keyboardOffset]);
+  }, [keyboardLift]);
 
-  // 智能注册键盘避让监听器
   useEffect(() => {
     const showSubscription = Keyboard.addListener(
       Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
       (e) => {
         setIsKeyboardVisible(true);
-        setIsTabBarHidden(false); // 展开键盘时，强行恢复底栏和输入框显示
-
-        activeKeyboardHeight.current = e.endCoordinates.height;
-        adjustKeyboardOffset(e.duration || 250);
+        setIsTabBarHidden(false);
+        const safeBottom = Platform.OS === 'ios' ? insets.bottom : 0;
+        const keyboardHeight = Math.max(0, e.endCoordinates.height - safeBottom);
+        animateKeyboardLift(Math.max(0, keyboardHeight - floatingBaseBottom + keyboardGap), e.duration || 240);
       }
     );
 
@@ -126,9 +117,7 @@ export default function ChatScreen() {
       Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
       (e) => {
         setIsKeyboardVisible(false);
-
-        activeKeyboardHeight.current = 0;
-        adjustKeyboardOffset(220); // 采用 220ms 跟手时长平滑落回
+        animateKeyboardLift(0, e.duration || 220);
       }
     );
 
@@ -136,7 +125,7 @@ export default function ChatScreen() {
       showSubscription.remove();
       hideSubscription.remove();
     };
-  }, [adjustKeyboardOffset]);
+  }, [animateKeyboardLift, insets.bottom]);
 
   // 初始化绑定 Option，并启用绝对定位平移
   useEffect(() => {
@@ -315,6 +304,16 @@ export default function ChatScreen() {
     }, 100);
   };
 
+  const formatProcessingMessage = useCallback((state?: { node?: string; message?: string }) => {
+    const text = `${state?.node || ''} ${state?.message || ''}`.toLowerCase();
+    if (text.includes('intent') || text.includes('意图')) return '正在分析用户意图...';
+    if (text.includes('memory') || text.includes('记忆') || text.includes('profile')) return '正在同步用户记忆...';
+    if (text.includes('plan') || text.includes('workout') || text.includes('训练') || text.includes('计划')) return '正在制作计划...';
+    if (text.includes('diet') || text.includes('nutrition') || text.includes('饮食')) return '正在整理饮食建议...';
+    if (text.includes('response') || text.includes('final') || text.includes('回复')) return '正在生成回复...';
+    return '正在处理用户信息...';
+  }, []);
+
   // Load history on login, clear on logout
   useEffect(() => {
     if (!isLoggedIn || !sessionId) {
@@ -323,7 +322,7 @@ export default function ChatScreen() {
     }
     (async () => {
       try {
-        const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
+        const baseUrl = getBackendBaseUrl();
         const resp = await fetch(`${baseUrl}/api/chat/history?session_id=${sessionId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -370,7 +369,7 @@ export default function ChatScreen() {
     setIsGenerating(true);
     const initialStatus = { node: 'Intent Classifier', message: '分析用户输入意图并静默同步记忆...' };
     setAgentStatus(initialStatus);
-    setThinkingSteps([{ ...initialStatus, timestamp: new Date() }]);
+    setProcessingMessage(formatProcessingMessage(initialStatus));
     scrollToBottom(true);
 
     // 2. 创建机器人的空消息以备流式追加
@@ -406,12 +405,7 @@ export default function ChatScreen() {
         },
         onState: (state) => {
           setAgentStatus(state);
-          setThinkingSteps((prev) => {
-            if (prev.some(step => step.node === state.node && step.message === state.message)) {
-              return prev;
-            }
-            return [...prev, { ...state, timestamp: new Date() }];
-          });
+          setProcessingMessage(formatProcessingMessage(state));
           scrollToBottom(true);
         },
         onToken: (tokenText) => {
@@ -456,7 +450,7 @@ export default function ChatScreen() {
         },
       }
     );
-  }, [inputText, isGenerating, token, mode, sessionId, useTrainingSheet]);
+  }, [inputText, isGenerating, token, mode, sessionId, useTrainingSheet, formatProcessingMessage]);
 
   // 主题配色
   const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
@@ -468,35 +462,7 @@ export default function ChatScreen() {
   const botBubbleBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
 
   return (
-    <View 
-      style={[styles.container, { backgroundColor: bgCol }]}
-      onLayout={(e) => {
-        const { height: newHeight } = e.nativeEvent.layout;
-        // 如果是首次加载，记录正常高度
-        if (containerHeight.current === 0) {
-          containerHeight.current = newHeight;
-        } else {
-          // 核心单调递增监测：若当前高度大于上一次高度，说明布局被系统拉伸（软键盘已开始缩回）！
-          if (lastHeight.current > 0 && newHeight > lastHeight.current && newHeight > containerHeight.current - 180) {
-            currentResizeHeight.current = 0;
-            if (activeKeyboardHeight.current > 0) {
-              activeKeyboardHeight.current = 0; // 瞬间归 0 驱动避让动画回落
-              setIsKeyboardVisible(false);       // 瞬间将 bottom 变回 80 / 62，完美顺应高度恢复
-            }
-          } else {
-            // 如果布局处于被压缩状态，正常计算 resize 高度
-            if (newHeight < containerHeight.current - 50) {
-              currentResizeHeight.current = containerHeight.current - newHeight;
-            } else {
-              currentResizeHeight.current = 0;
-            }
-          }
-          // 一旦布局高度改变，立即二次微调平移偏置，在 220ms 内极其顺滑地归位
-          adjustKeyboardOffset(220);
-        }
-        lastHeight.current = newHeight;
-      }}
-    >
+    <View style={[styles.container, { backgroundColor: bgCol }]}>
       {/* Header (Gradient Transparent) */}
       <LinearGradient
         colors={[
@@ -527,9 +493,8 @@ export default function ChatScreen() {
           <View style={styles.statusLimit}>
             <ActivityIndicator size="small" color="#007AFF" style={styles.spinner} />
             <View style={styles.statusTextContainer}>
-              <Text style={[styles.statusNode, { color: '#007AFF' }]}>[{agentStatus.node}]</Text>
               <Text style={[styles.statusMessage, { color: isDark ? '#AEAEB2' : '#666666' }]} numberOfLines={1}>
-                {agentStatus.message}
+                {processingMessage}
               </Text>
             </View>
           </View>
@@ -597,31 +562,11 @@ export default function ChatScreen() {
                       {msg.text}
                     </Text>
                   ) : isGenerating && msg.isBot && messages[messages.length - 1]?.id === msg.id ? (
-                    <View style={styles.thinkingConsole}>
-                      <View style={styles.consoleHeader}>
-                        <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />
-                        <Text style={[styles.consoleTitle, { color: textCol }]}>智能体引擎推理中...</Text>
-                      </View>
-                      <View style={styles.consoleSteps}>
-                        {thinkingSteps.map((step, idx) => {
-                          const isLast = idx === thinkingSteps.length - 1;
-                          return (
-                            <View key={idx} style={styles.consoleStepRow}>
-                              <Text style={[styles.stepStatus, { color: isLast ? '#007AFF' : '#34C759' }]}>
-                                {isLast ? '⚡' : '✓'}
-                              </Text>
-                              <View style={styles.stepContent}>
-                                <Text style={[styles.stepNode, { color: isLast ? '#007AFF' : (isDark ? '#FFFFFF' : '#1C1C1E'), fontWeight: '700' }]}>
-                                  [{step.node}]
-                                </Text>
-                                <Text style={[styles.stepDesc, { color: subTextCol }]}>
-                                  {step.message}
-                                </Text>
-                              </View>
-                            </View>
-                          );
-                        })}
-                      </View>
+                    <View style={styles.processingLine}>
+                      <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />
+                      <Text style={[styles.processingText, { color: subTextCol }]} numberOfLines={1}>
+                        {processingMessage}
+                      </Text>
                     </View>
                   ) : isGenerating && msg.isBot ? (
                     <ActivityIndicator size="small" color="#007AFF" />
@@ -647,30 +592,26 @@ export default function ChatScreen() {
       <Animated.View style={[
         styles.floatingControls,
         {
-          bottom: isKeyboardVisible 
-            ? (Platform.OS === 'ios' ? -24 : -26) 
-            : (Platform.OS === 'ios' ? 80 : 62),
+          bottom: floatingBaseBottom,
           transform: [
             {
               translateY: tabBarTranslateAnim.interpolate({
                 inputRange: [0, 100],
-                outputRange: [0, Platform.OS === 'ios' ? 48 : 48]
+                outputRange: [0, isKeyboardVisible ? 0 : 48]
               })
             },
             {
-              translateY: keyboardOffset.interpolate({
-                inputRange: [0, 0.1, 1000],
-                outputRange: [
-                  0, 
-                  Platform.OS === 'ios' ? -104 : -88, 
-                  -1000
-                ]
+              translateY: keyboardLift.interpolate({
+                inputRange: [0, 1000],
+                outputRange: [0, -1000],
+                extrapolate: 'clamp',
               })
             }
           ]
         }
       ]}>
         {/* Control Bar: Mode Capsule (Left) + Training Sheet (Right) */}
+        {!isKeyboardVisible && (
         <View style={styles.controlBar}>
 
           {/* Mode Capsule — iOS-style Segmented Control */}
@@ -736,6 +677,7 @@ export default function ChatScreen() {
             </TouchableOpacity>
           </Animated.View>
         </View>
+        )}
 
         {/* Frosted Glass Input Box */}
         <View style={[
@@ -851,6 +793,17 @@ const styles = StyleSheet.create({
   cardContainer: { marginTop: 12, width: '100%' },
 
   // ── Thinking Console ──
+  processingLine: {
+    minWidth: 220,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 2,
+  },
+  processingText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '600',
+  },
   thinkingConsole: {
     padding: 2,
     minWidth: 240,

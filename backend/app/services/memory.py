@@ -1,5 +1,4 @@
 import json
-import re
 import datetime
 from typing import Dict, Any, List, Optional
 from sqlalchemy import select, desc
@@ -11,13 +10,11 @@ CORE_PROFILE_KEYS = {"height_cm", "gender", "birth_date", "goal", "training_year
 METRICS_KEYS = {"weight", "body_fat", "muscle_mass", "bench_press", "squat", "deadlift"}
 
 
-def _should_try_llm_extraction(text: str) -> bool:
-    has_number = bool(re.search(r'\d+', text))
-    has_profile_kw = any(k in text for k in ["kg", "公斤", "斤", "cm", "厘米", "%", "岁", "体重", "体脂", "身高"])
-    return has_number or has_profile_kw
-
-
 async def _llm_extract_memory(user_input: str, user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
+    """
+    调用 LLM 从用户自然语言中提取结构化健身数据。
+    使用 MEMORY_EXTRACTION_SYSTEM 提示词，返回标准化的 extracted 列表。
+    """
     from app.services.llm_client import llm_call_structured
     from app.prompts import MEMORY_EXTRACTION_SYSTEM
     result = await llm_call_structured(
@@ -29,147 +26,47 @@ async def _llm_extract_memory(user_input: str, user_id: str, db: AsyncSession) -
     return result.get("extracted", [])
 
 
+# 不值得提取的纯问候/闲聊关键词（避免对每条消息都调用 LLM）
+_SKIP_EXTRACTION_KEYWORDS = {
+    "hi", "hello", "你好", "嗨", "哈哈", "哈哈哈", "好的", "好", "ok", "okay",
+    "谢谢", "感谢", "谢", "对", "是的", "明白", "了解", "知道了", "好的好的",
+    "没事", "没关系", "不客气", "随便", "都行", "无所谓",
+}
+
+
+def _should_skip_extraction(text: str) -> bool:
+    """
+    轻量前置过滤：跳过极短消息或纯问候，避免每条闲聊都触发额外的 LLM 调用。
+    策略是「宁可多送」而不是「严格过滤」，以避免漏掉有价值的数据。
+    """
+    stripped = text.strip()
+    if len(stripped) < 4:
+        return True
+    if stripped.lower() in _SKIP_EXTRACTION_KEYWORDS:
+        return True
+    return False
+
+
 class MemoryService:
 
     @staticmethod
     async def extract_and_sync_memory(user_input: str, user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
         extracted_items = []
-        user_input_lower = user_input.lower()
+        # ──────────────────────────────────────────────────────────
+        # 轻量前置过滤：跳过纯问候/空消息，避免每条消息都触发 LLM 调用
+        # ──────────────────────────────────────────────────────────
+        if _should_skip_extraction(user_input):
+            return []
 
-        # Parse weight: "我体重64kg" or "体重大约 64.5 公斤"
-        weight_match = re.search(r'(?:体重|weight)(?:是|大约)?\s*(\d+(?:\.\d+)?)\s*(?:kg|公斤|公斤重)?', user_input_lower)
-        if weight_match:
-            extracted_items.append({"key": "weight", "value": float(weight_match.group(1)), "type": "metric", "unit": "kg"})
-
-        # Parse body fat: "体脂18%" or "体脂不是20%，是18%"
-        body_fat_match = re.search(r'(?:体脂|body fat)(?:不是\d+%)?(?:是|大约)?\s*(\d+(?:\.\d+)?)\s*%', user_input_lower)
-        if body_fat_match:
-            extracted_items.append({"key": "body_fat", "value": float(body_fat_match.group(1)), "type": "metric", "unit": "%"})
-
-        # Parse height
-        height_match = re.search(r'(?:身高|height)(?:是|大约)?\s*(\d+(?:\.\d+)?)\s*(?:cm|厘米)?', user_input_lower)
-        if height_match:
-            extracted_items.append({"key": "height_cm", "value": float(height_match.group(1)), "type": "profile"})
-
-        # Parse goal
-        if "减脂" in user_input_lower or "cut" in user_input_lower:
-            extracted_items.append({"key": "goal", "value": "cut", "type": "profile"})
-        elif "增肌" in user_input_lower or "bulk" in user_input_lower:
-            extracted_items.append({"key": "goal", "value": "bulk", "type": "profile"})
-
-        # Parse exercise PRs (regex fast pass)
-        pull_up_match = re.search(r'(?:引体向上?|pull[-\s]?ups?)\s*(?:可以|能|最多)?\s*(?:做|拉)?\s*(\d+)\s*(?:个|次|reps?)?', user_input_lower)
-        if pull_up_match:
-            extracted_items.append({"key": "pull_up", "value": int(pull_up_match.group(1)), "type": "exercise_pr", "unit": "reps"})
-        push_up_match = re.search(r'(?:俯卧撑|push[-\s]?ups?)\s*(?:可以|能|最多)?\s*(?:做)?\s*(\d+)\s*(?:个|次|reps?)?', user_input_lower)
-        if push_up_match:
-            extracted_items.append({"key": "push_up", "value": int(push_up_match.group(1)), "type": "exercise_pr", "unit": "reps"})
-        bench_match = re.search(r'(?:卧推|bench[-\s]?press)\s*(?:可以|能|最多)?\s*(?:推)?\s*(\d+(?:\.\d+)?)\s*(?:kg|公斤)?', user_input_lower)
-        if bench_match:
-            extracted_items.append({"key": "bench_press", "value": float(bench_match.group(1)), "type": "exercise_pr", "unit": "kg"})
-        squat_match = re.search(r'(?:深蹲|squat)\s*(?:可以|能|最多)?\s*(?:蹲)?\s*(\d+(?:\.\d+)?)\s*(?:kg|公斤)?', user_input_lower)
-        if squat_match:
-            extracted_items.append({"key": "squat", "value": float(squat_match.group(1)), "type": "exercise_pr", "unit": "kg"})
-
-        # Parse sleep
-        sleep_hour_match = re.search(r'(?:睡|眠)(?:了|觉)?\s*(\d+(?:\.\d+)?)\s*(?:小时|个?钟|h)', user_input_lower)
-        if sleep_hour_match:
-            extracted_items.append({"key": "sleep_hours", "value": float(sleep_hour_match.group(1)), "type": "note"})
-        if any(k in user_input_lower for k in ["没睡好", "失眠", "睡不好", "睡得很差", "熬夜", "通宵"]):
-            extracted_items.append({"key": "sleep_quality", "value": "poor", "type": "note"})
-        elif any(k in user_input_lower for k in ["睡得好", "睡得很香", "睡眠不错"]):
-            extracted_items.append({"key": "sleep_quality", "value": "good", "type": "note"})
-
-        # Parse energy/soreness
-        if any(k in user_input_lower for k in ["状态很好", "精力充沛", "元气满满", "活力"]):
-            extracted_items.append({"key": "energy_level", "value": "high", "type": "note"})
-        elif any(k in user_input_lower for k in ["很累", "疲惫", "没精神", "状态不好", "没劲"]):
-            extracted_items.append({"key": "energy_level", "value": "low", "type": "note"})
-        if "酸" in user_input_lower or "酸痛" in user_input_lower:
-            body_parts = {"胸": "chest", "背": "back", "腿": "legs", "肩": "shoulders", "手臂": "arms", "腹": "abs"}
-            for cn, en in body_parts.items():
-                if cn in user_input_lower:
-                    extracted_items.append({"key": "soreness", "value": en, "type": "note"})
-                    break
-            else:
-                extracted_items.append({"key": "soreness", "value": "general", "type": "note"})
-
-        # Parse diet notes
-        if any(k in user_input_lower for k in ["没吃", "空腹", "还没吃", "没吃东西"]):
-            extracted_items.append({"key": "diet_note", "value": "skipped_meal", "type": "note"})
-        if any(k in user_input_lower for k in ["吃撑", "吃多", "暴食", "吃太多"]):
-            extracted_items.append({"key": "diet_note", "value": "overeaten", "type": "note"})
-        if any(k in user_input_lower for k in ["肌酸", "creatine"]):
-            extracted_items.append({"key": "supplement", "value": "creatine", "type": "note"})
-        if any(k in user_input_lower for k in ["蛋白粉", "乳清", "whey"]):
-            extracted_items.append({"key": "supplement", "value": "whey_protein", "type": "note"})
-
-        # Parse injury recovery
-        is_recovery = any(k in user_input_lower for k in ["好了", "康复", "痊愈", "恢复", "没有", "消除", "痊愈了", "康复了", "消退"])
-
-        if "左肩" in user_input_lower or "肩袖" in user_input_lower:
-            extracted_items.append({
-                "key": "injuries", "value": "左肩袖劳损", "type": "injury",
-                "action": "remove" if is_recovery else "add",
-            })
-        elif "腰" in user_input_lower or "腰肌" in user_input_lower:
-            extracted_items.append({
-                "key": "injuries", "value": "轻度腰肌劳损", "type": "injury",
-                "action": "remove" if is_recovery else "add",
-            })
-
-        # Event logging with highly robust noise filtering (Layer 3 - Episodic Memory)
-        is_query_or_future = any(k in user_input_lower for k in [
-            "计划", "安排", "定制", "设计", "怎么", "如何", "帮我", "想要", "求", "我想练", 
-            "吗", "为什么", "什么时候", "有用吗", "建议", "咨询", "请教", "教我", "想知道",
-            "明天", "后天", "打算", "准备", "去不去", "可以吗", "要不要", "该不该"
-        ])
-        
-        is_negative = any(k in user_input_lower for k in [
-            "没练", "没有练", "不练", "断食", "戒", "没吃", "还没吃", "没有吃", "不吃", "别吃"
-        ])
-        
-        if not is_query_or_future and not is_negative and not extracted_items:
-            is_training_log = False
-            is_diet_log = False
-            
-            # 训练打卡特征过滤
-            training_action_kws = ["卧推", "深蹲", "硬拉", "俯卧撑", "引体向上", "跑步", "划船", "器械", "侧平举", "卷腹", "拉伸", "训练", "健身"]
-            has_training_kw = any(k in user_input_lower for k in training_action_kws)
-            has_training_done = any(k in user_input_lower for k in ["练了", "练完", "做完", "完成了", "打卡", "推了", "蹲了", "拉了", "跑了"])
-            has_volume_data = bool(re.search(r'\d+\s*(?:组|个|次|kg|公斤|公里|分钟|min)', user_input_lower))
-            
-            if has_training_kw and (has_training_done or has_volume_data):
-                is_training_log = True
-                
-            # 饮食打卡特征过滤
-            diet_kws = ["鸡胸", "蛋白粉", "鸡蛋", "牛肉", "米饭", "燕麦", "沙拉", "西蓝花", "香蕉", "红薯", "卡路里", "热量", "摄入", "脂肪", "蛋白质"]
-            has_diet_kw = any(k in user_input_lower for k in diet_kws)
-            has_diet_done = any(k in user_input_lower for k in ["吃了", "喝了", "摄入了", "吃完", "记录下"])
-            has_cal_data = bool(re.search(r'\d+\s*(?:g|克|千卡|卡|kcal)', user_input_lower))
-            
-            if has_diet_kw and (has_diet_done or has_cal_data):
-                is_diet_log = True
-                
-            if is_training_log or is_diet_log:
-                event_type = "training" if is_training_log else "diet"
-                event = Events(
-                    user_id=user_id,
-                    event_type=event_type,
-                    payload={"raw_input": user_input, "timestamp": datetime.datetime.utcnow().isoformat()},
-                    event_date=datetime.date.today(),
-                )
-                db.add(event)
-                await db.flush()
-                return [{"key": "event", "value": event_type, "type": "event"}]
-
-        # LLM fallback for complex inputs
-        if not extracted_items and _should_try_llm_extraction(user_input_lower):
-            try:
-                llm_items = await _llm_extract_memory(user_input, user_id, db)
-                extracted_items.extend(llm_items)
-            except Exception:
-                pass
+        # ──────────────────────────────────────────────────────────
+        # 直接调用 LLM 从用户自然语言中提取所有结构化健身数据
+        # （使用 MEMORY_EXTRACTION_SYSTEM 提示词，比正则更灵活精准）
+        # ──────────────────────────────────────────────────────────
+        try:
+            extracted_items = await _llm_extract_memory(user_input, user_id, db)
+        except Exception as e:
+            print(f"[Memory Extraction Error] LLM 提取失败，跳过本轮存储: {e}")
+            return []
 
         # Sync extracted items to DB
         changes = []

@@ -441,17 +441,29 @@ workflow.set_entry_point("intent_classifier")
 
 
 def route_intent(state: AgentState) -> str:
-    if state["route"] == "training_plan":
-        return "profile_retrieval"
-    return "response_builder"
+    # 所有意图都先走 profile_retrieval，确保 AI 回复时能读取到训练历史、近期事件等数据
+    # （之前 chat 意图直接跳到 response_builder，导致 AI 看不到训练完成记录）
+    return "profile_retrieval"
 
 
 workflow.add_conditional_edges("intent_classifier", route_intent, {
     "profile_retrieval": "profile_retrieval",
-    "response_builder": "response_builder",
 })
 
-workflow.add_edge("profile_retrieval", "planner")
+def route_after_profile(state: AgentState) -> str:
+    """profile_retrieval 完成后，根据意图决定下一个节点。
+    - training_plan → planner（生成训练计划流程）
+    - 其他意图（chat/diet_log/profile_update）→ response_builder（直接生成回复）
+    """
+    if state.get("intent") == "training_plan":
+        return "planner"
+    return "response_builder"
+
+
+workflow.add_conditional_edges("profile_retrieval", route_after_profile, {
+    "planner": "planner",
+    "response_builder": "response_builder",
+})
 
 
 def route_mode(state: AgentState) -> str:

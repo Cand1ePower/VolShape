@@ -9,6 +9,7 @@ export interface Exercise {
   sets: number;
   reps: string;
   weight?: string;
+  rest_seconds?: number;
   notes?: string;
 }
 
@@ -113,6 +114,12 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
               </View>
             )}
 
+            {item.rest_seconds && (
+              <View style={styles.restBadge}>
+                <Text style={styles.restText}>⏱ 组间休息 {item.rest_seconds}s</Text>
+              </View>
+            )}
+
             {item.notes && (
               <View style={[styles.notesContainer, { borderLeftColor: accentCol }]}>
                 <Text style={[styles.exerciseNotes, { color: subTextCol }]}>
@@ -179,128 +186,141 @@ export const WorkoutCard: React.FC<WorkoutCardProps> = ({ data }) => {
 
 const styles = StyleSheet.create({
   card: {
-    borderRadius: 24,
-    borderWidth: 1,
-    padding: 18,
-    marginVertical: 12,
+    borderRadius: 20,
+    borderWidth: 0.5,
+    padding: 16,
+    marginVertical: 8,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.06,
-    shadowRadius: 24,
-    elevation: 2,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.04,
+    shadowRadius: 12,
+    elevation: 1,
     alignSelf: 'stretch',
   },
   header: {
-    marginBottom: 16,
+    marginBottom: 14,
   },
   title: {
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 10,
-    letterSpacing: -0.5,
+    marginBottom: 8,
+    letterSpacing: -0.3,
   },
   chipContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    gap: 8,
+    gap: 6,
   },
   chip: {
-    paddingHorizontal: 12,
-    paddingVertical: 5,
-    borderRadius: 14,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 12,
   },
   chipText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: '700',
   },
   exerciseList: {
-    borderRadius: 12,
+    borderRadius: 10,
     overflow: 'hidden',
-    marginBottom: 16,
+    marginBottom: 14,
   },
   exerciseItem: {
-    padding: 14,
-    borderBottomWidth: 1,
+    padding: 12,
+    borderBottomWidth: 0.5,
   },
   exerciseHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
-    marginBottom: 8,
+    gap: 8,
+    marginBottom: 6,
   },
   numberBadge: {
-    width: 24,
-    height: 24,
-    borderRadius: 12,
+    width: 20,
+    height: 20,
+    borderRadius: 10,
     justifyContent: 'center',
     alignItems: 'center',
   },
   exerciseNumber: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
   },
   exerciseName: {
     flex: 1,
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '700',
   },
   volumeBadge: {
     backgroundColor: '#007AFF15',
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 8,
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   volumeText: {
-    fontSize: 12,
+    fontSize: 11,
     fontWeight: 'bold',
     color: '#007AFF',
   },
   weightBadge: {
     alignSelf: 'flex-start',
     backgroundColor: 'rgba(255, 149, 0, 0.12)',
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderRadius: 6,
-    marginBottom: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 5,
+    marginBottom: 6,
   },
   weightText: {
     color: '#FF9500',
-    fontSize: 11,
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  restBadge: {
+    alignSelf: 'flex-start',
+    backgroundColor: 'rgba(88, 86, 214, 0.10)',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 5,
+    marginBottom: 6,
+  },
+  restText: {
+    color: '#5856D6',
+    fontSize: 10,
     fontWeight: '700',
   },
   notesContainer: {
-    borderLeftWidth: 3,
-    paddingLeft: 8,
+    borderLeftWidth: 2,
+    paddingLeft: 6,
     marginTop: 4,
   },
   exerciseNotes: {
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 11,
+    lineHeight: 16,
     fontStyle: 'italic',
   },
   disclaimerContainer: {
-    borderRadius: 10,
-    padding: 12,
-    marginBottom: 16,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 14,
   },
   disclaimerText: {
-    fontSize: 12,
-    lineHeight: 18,
+    fontSize: 11,
+    lineHeight: 16,
     fontWeight: '600',
   },
   applyButton: {
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 12,
+    paddingVertical: 12,
     alignItems: 'center',
     justifyContent: 'center',
     shadowColor: '#007AFF',
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
   },
   applyButtonText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: 'bold',
   },
 });

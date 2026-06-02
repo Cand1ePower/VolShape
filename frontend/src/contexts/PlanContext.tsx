@@ -23,6 +23,7 @@ export interface CompletedPlan extends ActivePlan {
   completedAt: Date;
   completedSets: number;
   totalSets: number;
+  completedKeys?: string[];
 }
 
 interface PlanContextType {
@@ -66,7 +67,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
 
   // 获取后台 API URL 辅助器
   const getWorkoutUrl = (path: string) => {
-    const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.18:8000' : 'http://localhost:8000';
+    const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
     return `${baseUrl}${path}`;
   };
 
@@ -112,6 +113,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
             completedAt: new Date(p.target_date), // 简化处理，使用目标日期作为完成时间
             completedSets: p.completion_data?.completed_sets || 0,
             totalSets: p.completion_data?.total_sets || 0,
+            completedKeys: p.completion_data?.completed_keys || [],
           }));
           setTrainingHistory(historyList);
         }
@@ -251,6 +253,7 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
       completedAt: new Date(),
       completedSets: completedKeys.length,
       totalSets,
+      completedKeys,
     };
 
     try {

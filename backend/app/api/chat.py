@@ -83,6 +83,7 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         "mode": mode,
         "intent": "",
         "user_profile": {},
+        "mem0_context": "",
         "recent_events": [],
         "conversation_history": history[-10:],
         "plan_steps": [],
@@ -99,8 +100,20 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
     config = {"configurable": {"db": db}}
     final_state_snapshot = {}
 
-    # Save user message immediately
+    # Save user message immediately to physical DB
     await _save_message(user_id, session_id, "user", user_input, db)
+    
+    # Save user message to mem0 memory async
+    try:
+        from app.services.mem0_client import add_memory_async, search_memory_async
+        import asyncio
+        asyncio.create_task(add_memory_async([{"role": "user", "content": user_input}], user_id))
+        
+        # Retrieve context from mem0 for the current prompt
+        mem0_context = await search_memory_async(user_input, user_id)
+        initial_state["mem0_context"] = mem0_context
+    except Exception as e:
+        print(f"[mem0 Error] {e}")
 
     # Langfuse observe
     langfuse_ctx = None
@@ -197,6 +210,12 @@ async def clear_session(user_id: str = Depends(get_current_user_id),
     ))
     await db.commit()
     return {"status": "cleared", "session_id": session_id}
+
+@router.get("/mem0")
+async def get_mem0_memory(user_id: str = Depends(get_current_user_id)):
+    from app.services.mem0_client import get_all_memory_async
+    memories = await get_all_memory_async(user_id)
+    return {"memories": memories}
 
 
 @router.get("/profile")

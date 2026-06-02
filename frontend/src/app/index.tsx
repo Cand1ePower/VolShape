@@ -1,11 +1,11 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
-import { 
-  View, 
-  Text, 
-  StyleSheet, 
-  KeyboardAvoidingView, 
-  Platform, 
-  useColorScheme, 
+import {
+  View,
+  Text,
+  StyleSheet,
+  KeyboardAvoidingView,
+  Platform,
+  useColorScheme,
   ActivityIndicator,
   useWindowDimensions,
   ScrollView,
@@ -19,6 +19,7 @@ import { WorkoutCard } from '../components/ui/WorkoutCard';
 import { DietCard } from '../components/ui/DietCard';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlan } from '../contexts/PlanContext';
+import { LinearGradient } from 'expo-linear-gradient';
 
 // 自定义商业级 Message 强类型结构
 interface Message {
@@ -32,7 +33,7 @@ interface Message {
 // 自动检测不同平台下的本地服务 IP 地址
 const getBackendUrl = () => {
   if (Platform.OS === 'android') {
-    return 'http://192.168.10.18:8000/api/chat/stream';
+    return 'http://192.168.10.7:8000/api/chat/stream';
   }
   return 'http://localhost:8000/api/chat/stream';
 };
@@ -42,12 +43,12 @@ export default function ChatScreen() {
   const isDark = scheme === 'dark';
   const { width, height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
-  
+
   // 响应式极速尺寸计算 (Responsive Dimensions Engine)
   const isSmallScreen = width < 375;
   const isLargeScreen = width > 768;
   const maxWrapperWidth = 800; // 与大厂 ChatGPT/Claude 看齐的最大内容宽度
-  
+
   const dynamicFontSize = isSmallScreen ? 14 : 15;
 
   // Auth
@@ -103,7 +104,7 @@ export default function ChatScreen() {
     }
     (async () => {
       try {
-        const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.18:8000' : 'http://localhost:8000';
+        const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
         const resp = await fetch(`${baseUrl}/api/chat/history?session_id=${sessionId}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -168,7 +169,7 @@ export default function ChatScreen() {
     const url = getBackendUrl();
     if (!token) return;
     // Use auth context token
-    
+
     esRef.current = connectChatStream(
       url,
       token,
@@ -239,23 +240,21 @@ export default function ChatScreen() {
   const botBubbleBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
 
   return (
-    <SafeAreaView style={[styles.container, { backgroundColor: bgCol }]} edges={['top']}>
-      {/* Header */}
-      <View style={[
-        styles.header, 
-        { 
-          backgroundColor: headerBg, 
-          borderBottomColor: borderCol, 
-          paddingTop: Math.max(insets.top, 12), // 🌟 移除 Web 下多余硬编码 72px，按 safeArea 响应式微调
-          ...Platform.select({
-            web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
-            default: {}
-          })
-        }
-      ]}>
+    <View style={[styles.container, { backgroundColor: bgCol }]}>
+      {/* Header (Gradient Transparent) */}
+      <LinearGradient
+        colors={[
+          isDark ? 'rgba(10,10,12,0.95)' : 'rgba(245,245,247,0.95)',
+          isDark ? 'rgba(10,10,12,0)' : 'rgba(245,245,247,0)'
+        ]}
+        style={[
+          styles.header,
+          { paddingTop: Math.max(insets.top, 12), paddingBottom: 28 }
+        ]}
+      >
         <View style={styles.headerRow}>
           <View style={styles.headerLeft}>
-            <Text style={[styles.headerTitle, { color: textCol }]}>VolShape AI 教练</Text>
+            <Text style={[styles.headerTitle, { color: textCol }]}>VolShape</Text>
             <View style={styles.headerSubtitleContainer}>
               <View style={[styles.statusDot, { backgroundColor: isGenerating ? '#34C759' : isLoggedIn ? '#007AFF' : '#AEAEB2' }]} />
               <Text style={[styles.headerSubtitle, { color: subTextCol }]}>
@@ -264,7 +263,7 @@ export default function ChatScreen() {
             </View>
           </View>
         </View>
-      </View>
+      </LinearGradient>
 
       {/* 智能体执行状态显示区（LangGraph 节点流） */}
       {agentStatus && (
@@ -282,9 +281,10 @@ export default function ChatScreen() {
       )}
 
       {/* 核心大厂级高度响应式消息流区域 */}
-      <KeyboardAvoidingView 
+      <KeyboardAvoidingView
         style={styles.keyboardContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
       >
         <ScrollView
           ref={scrollViewRef}
@@ -294,48 +294,48 @@ export default function ChatScreen() {
         >
           <View style={styles.maxWidthContainer}>
             {messages.map((msg) => (
-              <View 
-                key={msg.id} 
+              <View
+                key={msg.id}
                 style={[
-                  styles.messageRow, 
+                  styles.messageRow,
                   msg.isBot ? styles.botRow : styles.userRow
                 ]}
               >
                 {/* 消息气泡 - 🛡️【商业化重构】在 Web 上 100% 完美的自动折行计算 */}
-                <View 
+                <View
                   style={[
-                    styles.bubble, 
-                    msg.isBot 
+                    styles.bubble,
+                    msg.isBot
                       ? [
-                          styles.botBubble, 
-                          { 
-                            backgroundColor: botBubbleBg, 
-                            borderColor: borderCol,
-                            ...Platform.select({
-                              web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
-                              default: {}
-                            })
-                          }
-                        ] 
+                        styles.botBubble,
+                        {
+                          backgroundColor: botBubbleBg,
+                          borderColor: borderCol,
+                          ...Platform.select({
+                            web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
+                            default: {}
+                          })
+                        }
+                      ]
                       : [
-                          styles.userBubble, 
-                          { 
-                            backgroundColor: isDark ? 'rgba(0, 122, 255, 0.85)' : '#007AFF',
-                            shadowColor: '#007AFF',
-                            shadowOffset: { width: 0, height: 4 },
-                            shadowOpacity: 0.12,
-                            shadowRadius: 10,
-                            elevation: 2
-                          }
-                        ]
+                        styles.userBubble,
+                        {
+                          backgroundColor: isDark ? 'rgba(0, 122, 255, 0.85)' : '#007AFF',
+                          shadowColor: '#007AFF',
+                          shadowOffset: { width: 0, height: 4 },
+                          shadowOpacity: 0.12,
+                          shadowRadius: 10,
+                          elevation: 2
+                        }
+                      ]
                   ]}
                 >
                   {msg.text ? (
-                    <Text 
+                    <Text
                       style={[
-                        styles.messageText, 
-                        { 
-                          fontSize: dynamicFontSize, 
+                        styles.messageText,
+                        {
+                          fontSize: dynamicFontSize,
                           color: msg.isBot ? textCol : '#FFFFFF',
                           lineHeight: dynamicFontSize + 6
                         }
@@ -364,7 +364,10 @@ export default function ChatScreen() {
         </ScrollView>
 
         {/* Input Area */}
-        <View style={styles.inputArea}>
+        <View style={[
+          styles.inputArea,
+          { paddingBottom: Platform.OS === 'ios' ? insets.bottom + 4 : 20 }
+        ]}>
           {/* Mode Toggle */}
           <View style={styles.modeToggle}>
             <TouchableOpacity activeOpacity={0.7} style={[styles.modeChip, mode === 'quick' && styles.modeChipActive]} onPress={() => setMode('quick')}>
@@ -376,14 +379,10 @@ export default function ChatScreen() {
           </View>
 
           <View style={[
-            styles.inputWrapper, 
-            { 
-              backgroundColor: inputBg, 
-              borderColor: borderCol,
-              ...Platform.select({
-                web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
-                default: {}
-              })
+            styles.inputWrapper,
+            {
+              backgroundColor: inputBg,
+              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
             }
           ]}>
             <TextInput
@@ -409,7 +408,7 @@ export default function ChatScreen() {
         </View>
       </KeyboardAvoidingView>
 
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -417,10 +416,13 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   // ── Header ──
   header: {
-    borderBottomWidth: 0.5,
-    paddingHorizontal: 20,
-    paddingVertical: 14,
-    width: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    zIndex: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
   },
   headerRow: {
     flexDirection: 'row',
@@ -430,8 +432,8 @@ const styles = StyleSheet.create({
     maxWidth: 800,
     alignSelf: 'center',
   },
-  headerLeft: { gap: 2 },
-  headerTitle: { fontSize: 20, fontWeight: '800', letterSpacing: -0.8 },
+  headerLeft: { gap: 1 },
+  headerTitle: { fontSize: 18, fontWeight: '800', letterSpacing: -0.6 },
   headerSubtitleContainer: { flexDirection: 'row', alignItems: 'center', marginTop: 3, gap: 6 },
   statusDotWrap: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusDot: { width: 7, height: 7, borderRadius: 4 },
@@ -455,9 +457,10 @@ const styles = StyleSheet.create({
   statusNode: { fontSize: 12, fontWeight: '700' },
   statusMessage: { fontSize: 12, flex: 1 },
   // ── Chat ──
-  keyboardContainer: { flex: 1, width: '100%', alignItems: 'center' },
+  keyboardContainer: { flex: 1, width: '100%', alignItems: 'center', flexDirection: 'column' },
   chatScroll: { flex: 1, width: '100%' },
-  chatContent: { alignItems: 'center', paddingVertical: 24, paddingHorizontal: 20, width: '100%' },
+  chatContent: { alignItems: 'center', paddingTop: 100, paddingBottom: 20, paddingHorizontal: 16, width: '100%' },
+
   maxWidthContainer: { width: '100%', maxWidth: 760, gap: 20 },
   messageRow: { width: '100%', flexDirection: 'row', marginVertical: 4 },
   botRow: { justifyContent: 'flex-start', paddingRight: 40 },
@@ -476,21 +479,24 @@ const styles = StyleSheet.create({
   cardContainer: { marginTop: 12, width: '100%' },
   // ── Input ──
   inputArea: {
-    width: '100%', maxWidth: 780,
-    paddingHorizontal: 20, paddingBottom: Platform.OS === 'ios' ? 12 : 20,
-    paddingTop: 8, alignItems: 'center',
+    width: '100%', maxWidth: 780, alignSelf: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    alignItems: 'center',
+    backgroundColor: 'transparent',
   },
-  modeToggle: { flexDirection: 'row', gap: 8, marginBottom: 10, alignSelf: 'center' },
-  modeChip: { paddingVertical: 5, paddingHorizontal: 14, borderRadius: 14, borderWidth: 1, borderColor: 'rgba(0,122,255,0.2)' },
-  modeChipActive: { backgroundColor: 'rgba(0,122,255,0.12)', borderColor: '#007AFF' },
-  modeChipText: { fontSize: 12, fontWeight: '600', color: '#8E8E93' },
-  modeChipTextActive: { color: '#007AFF' },
+
+  modeToggle: { flexDirection: 'row', gap: 8, marginBottom: 12, alignSelf: 'center' },
+  modeChip: { paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: 'transparent', backgroundColor: 'rgba(0,122,255,0.06)' },
+  modeChipActive: { backgroundColor: '#007AFF', shadowColor: '#007AFF', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 3 },
+  modeChipText: { fontSize: 13, fontWeight: '600', color: '#8E8E93' },
+  modeChipTextActive: { color: '#FFFFFF' },
   inputWrapper: {
-    width: '100%', borderRadius: 28, borderWidth: 1,
+    width: '100%', borderRadius: 32, borderWidth: 0.5,
     flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 18, paddingVertical: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.04, shadowRadius: 12, elevation: 1,
+    paddingHorizontal: 20, paddingVertical: 8,
+    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.1, shadowRadius: 20, elevation: 5,
   },
   textInput: {
     flex: 1, maxHeight: 120, paddingVertical: 8, marginRight: 12, fontSize: 15,

@@ -26,7 +26,7 @@ from sqlalchemy import select, desc
 MAX_CORRECTION_LOOPS = 3
 
 
-def _format_profile_for_prompt(profile: dict) -> str:
+def _format_profile_for_prompt(profile: dict, mem0_context: str = "") -> str:
     parts = []
     if profile.get("height_cm"):
         parts.append(f"身高: {profile['height_cm']}cm")
@@ -67,6 +67,9 @@ def _format_profile_for_prompt(profile: dict) -> str:
             ex_details = [f"{e.get('name')}({e.get('sets')}组)" for e in exercises if e.get("name")]
             plan_summaries.append(f"- 日期: {p.get('target_date')} | 计划: {title} | 状态: {status_label} | 包含动作: {', '.join(ex_details)}")
         parts.append("\n[用户近5天在独立数据库中应用并使用的训练计划数据(专表专用)]:\n" + "\n".join(plan_summaries) + "\n[近5天计划背景结束]\n")
+
+    if mem0_context:
+        parts.append("\n[Mem0 高级记忆系统提取的用户特征与上下文]:\n" + mem0_context + "\n[Mem0记忆结束]\n")
 
     return "; ".join(parts) if parts else "新用户，无历史数据"
 
@@ -183,7 +186,8 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
 async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
-    profile_summary = _format_profile_for_prompt(user_profile)
+    mem0_context = state.get("mem0_context", "")
+    profile_summary = _format_profile_for_prompt(user_profile, mem0_context)
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
 
@@ -210,7 +214,8 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     user_profile = state.get("user_profile", {})
     plan_steps = state.get("plan_steps", [])
     user_input = state.get("user_input", "")
-    profile_summary = _format_profile_for_prompt(user_profile)
+    mem0_context = state.get("mem0_context", "")
+    profile_summary = _format_profile_for_prompt(user_profile, mem0_context)
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
 
@@ -384,7 +389,8 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
         
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
-    profile_summary = _format_profile_for_prompt(user_profile)
+    mem0_context = state.get("mem0_context", "")
+    profile_summary = _format_profile_for_prompt(user_profile, mem0_context)
     feedback = reflection.get("feedback", "")
     score = reflection.get("score", 85)
     history = state.get("conversation_history", [])

@@ -13,6 +13,7 @@ class AgentState(TypedDict):
 
     # Profile and event context
     user_profile: Dict[str, Any]
+    mem0_context: str
     recent_events: List[Dict[str, Any]]
     conversation_history: List[Dict[str, str]]
 

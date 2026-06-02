@@ -31,16 +31,21 @@ export default function ExploreScreen() {
   // Memory viewer modal
   const [memoryModalVisible, setMemoryModalVisible] = useState(false);
   const [memoryData, setMemoryData] = useState<any>(null);
+  const [mem0Data, setMem0Data] = useState<any>(null);
   const [memoryLoading, setMemoryLoading] = useState(false);
 
   const fetchMemory = async () => {
     setMemoryLoading(true);
     setMemoryModalVisible(true);
     try {
-      const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.18:8000' : 'http://localhost:8000';
+      const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
       const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
       const data = await response.json();
       setMemoryData(data);
+      
+      const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
+      const mem0Json = await mem0Resp.json();
+      setMem0Data(mem0Json.memories || []);
     } catch (err) {
       console.error('Failed to fetch memory:', err);
     } finally {
@@ -53,10 +58,14 @@ export default function ExploreScreen() {
     if (isLoggedIn && token) {
       (async () => {
         try {
-          const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.18:8000' : 'http://localhost:8000';
+          const baseUrl = Platform.OS === 'android' ? 'http://192.168.10.7:8000' : 'http://localhost:8000';
           const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
           const data = await response.json();
           setMemoryData(data);
+          
+          const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
+          const mem0Json = await mem0Resp.json();
+          setMem0Data(mem0Json.memories || []);
         } catch (err) {
           console.log('Background fetching profile failed:', err);
         }
@@ -234,6 +243,19 @@ export default function ExploreScreen() {
                     ))
                     : <Text style={{ color: subTextCol, fontSize: 12 }}>无</Text>}
                 </View>
+
+                {/* Mem0 AI Long Term Memory */}
+                <Text style={{ fontSize: 11, fontWeight: '800', color: '#007AFF', marginTop: 14, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8 }}>Mem0: 深度语义记忆</Text>
+                <View style={{ borderWidth: 0.5, borderRadius: 12, padding: 12, borderColor: borderCol }}>
+                  {(mem0Data || []).length > 0
+                    ? mem0Data.map((mem: any, i: number) => (
+                      <View key={i} style={{ paddingVertical: 5 }}>
+                        <Text style={{ fontSize: 12, color: textCol }}>• {mem.memory}</Text>
+                        <Text style={{ fontSize: 10, color: subTextCol, marginTop: 2 }}>{new Date(mem.created_at).toLocaleString()}</Text>
+                      </View>
+                    ))
+                    : <Text style={{ color: subTextCol, fontSize: 12 }}>无 Mem0 记忆记录</Text>}
+                </View>
               </ScrollView>
             ) : (
               <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
@@ -256,31 +278,31 @@ const styles = StyleSheet.create({
   header: { marginTop: Spacing.two, marginBottom: Spacing.two },
   headerTitle: { fontWeight: 'bold', fontSize: 24 },
   headerSubtitle: { fontSize: 13, marginTop: 4 },
-  card: { borderRadius: 20, borderWidth: 0.5, shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.08, shadowRadius: 12, elevation: 2 },
-  cardTitle: { fontWeight: 'bold', fontSize: 15, marginBottom: 12 },
+  card: { borderRadius: 14, borderWidth: 0.5, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 1 },
+  cardTitle: { fontWeight: 'bold', fontSize: 14, marginBottom: 8 },
   // Account
-  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  acLabel: { fontSize: 11, marginBottom: 4 },
-  acId: { fontSize: 12, fontWeight: '600', fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }), marginBottom: 8 },
-  acMeta: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
-  statusBadgeText: { fontSize: 10, fontWeight: '700' },
-  acMetaText: { fontSize: 10 },
-  loginBtn: { backgroundColor: '#007AFF', paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12 },
-  loginBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
-  logoutBtn: { backgroundColor: 'rgba(255,59,48,0.1)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.3)', paddingVertical: 10, paddingHorizontal: 18, borderRadius: 12 },
-  logoutBtnText: { color: '#FF3B30', fontWeight: '700', fontSize: 13 },
+  accountRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  acLabel: { fontSize: 10, marginBottom: 3 },
+  acId: { fontSize: 11, fontWeight: '600', fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }), marginBottom: 6 },
+  acMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  statusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
+  statusBadgeText: { fontSize: 9, fontWeight: '700' },
+  acMetaText: { fontSize: 9 },
+  loginBtn: { backgroundColor: '#007AFF', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 },
+  loginBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
+  logoutBtn: { backgroundColor: 'rgba(255,59,48,0.08)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.2)', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 },
+  logoutBtnText: { color: '#FF3B30', fontWeight: '700', fontSize: 12 },
   // Memory
-  memHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
-  viewMemBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 8, backgroundColor: 'rgba(0,122,255,0.08)' },
-  viewMemBtnText: { color: '#007AFF', fontSize: 12, fontWeight: '600' },
-  memDesc: { fontSize: 12, lineHeight: 20 },
+  memHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
+  viewMemBtn: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 6, backgroundColor: 'rgba(0,122,255,0.06)' },
+  viewMemBtnText: { color: '#007AFF', fontSize: 11, fontWeight: '600' },
+  memDesc: { fontSize: 11, lineHeight: 18 },
   // Stats
-  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  statItem: { flex: 1, minWidth: '44%', padding: 10, backgroundColor: 'rgba(0,122,255,0.04)', borderRadius: 10 },
-  statLabel: { fontSize: 10, color: '#8E8E93', marginBottom: 4 },
-  statVal: { fontWeight: 'bold', fontSize: 18 },
-  statUnit: { fontSize: 12, color: '#8E8E93', fontWeight: 'normal' },
+  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  statItem: { flex: 1, minWidth: '44%', padding: 8, backgroundColor: 'rgba(0,122,255,0.03)', borderRadius: 8 },
+  statLabel: { fontSize: 9, color: '#8E8E93', marginBottom: 2 },
+  statVal: { fontWeight: 'bold', fontSize: 15 },
+  statUnit: { fontSize: 11, color: '#8E8E93', fontWeight: 'normal' },
   // Modals
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   loginModal: { width: '100%', maxWidth: 380, borderRadius: 24, borderWidth: 0.5, padding: 28 },

@@ -1,0 +1,20 @@
+# 默认将所有文本文件在 Git 仓库和工作区中统一规范为 LF 换行符
+* text=auto eol=lf
+
+# 针对不同文件类型进行明确指定
+*.py text eol=lf
+*.ts text eol=lf
+*.tsx text eol=lf
+*.js text eol=lf
+*.jsx text eol=lf
+*.json text eol=lf
+*.css text eol=lf
+*.html text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sh text eol=lf
+
+# Windows 批处理脚本强制使用 CRLF 换行符
+*.bat text eol=crlf
+*.cmd text eol=crlf

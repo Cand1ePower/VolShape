@@ -1,18 +1,23 @@
 import React from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme, useWindowDimensions } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, useColorScheme, useWindowDimensions, Modal } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usePlan, CompletedPlan } from '@/contexts/PlanContext';
 
 const MONTHS = ['1月', '2月', '3月', '4月', '5月', '6月', '7月', '8月', '9月', '10月', '11月', '12月'];
 
 function formatDate(d: Date): string {
-  return `${MONTHS[d.getMonth()]}${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  try {
+    const dateObj = typeof d === 'string' ? new Date(d) : d;
+    return `${MONTHS[dateObj.getMonth()]}${dateObj.getDate()}日 ${String(dateObj.getHours()).padStart(2, '0')}:${String(dateObj.getMinutes()).padStart(2, '0')}`;
+  } catch {
+    return '今日训练';
+  }
 }
 
-function HistoryCard({ plan, isDark, bg, border, text, sub }: { plan: CompletedPlan; isDark: boolean; bg: string; border: string; text: string; sub: string }) {
+function HistoryCard({ plan, isDark, bg, border, text, sub, onPress }: { plan: CompletedPlan; isDark: boolean; bg: string; border: string; text: string; sub: string; onPress: () => void }) {
   const done = plan.completedSets >= plan.totalSets;
   return (
-    <View style={[styles.historyCard, { backgroundColor: bg, borderColor: border }]}>
+    <TouchableOpacity activeOpacity={0.7} onPress={onPress} style={[styles.historyCard, { backgroundColor: bg, borderColor: border }]}>
       <View style={styles.historyLeft}>
         <View style={[styles.historyDot, { backgroundColor: done ? '#34C759' : '#FF9500' }]} />
         <View style={[styles.historyLine, { backgroundColor: border }]} />
@@ -30,17 +35,17 @@ function HistoryCard({ plan, isDark, bg, border, text, sub }: { plan: CompletedP
           {formatDate(plan.completedAt)} · {plan.exercises.length} 个动作 · {plan.totalSets} 组
         </Text>
         <View style={styles.historyExercises}>
-          {plan.exercises.slice(0, 4).map((ex, i) => (
+          {plan.exercises.slice(0, 3).map((ex, i) => (
             <Text key={i} style={[styles.historyExItem, { color: sub }]}>
               {ex.name} {ex.sets}×{ex.reps}
             </Text>
           ))}
-          {plan.exercises.length > 4 && (
-            <Text style={[styles.historyExItem, { color: sub }]}>+{plan.exercises.length - 4} 更多</Text>
+          {plan.exercises.length > 3 && (
+            <Text style={[styles.historyExItem, { color: sub }]}>+{plan.exercises.length - 3} 更多...</Text>
           )}
         </View>
       </View>
-    </View>
+    </TouchableOpacity>
   );
 }
 
@@ -51,10 +56,12 @@ export default function TrainScreen() {
   const { width } = useWindowDimensions();
   const { activePlan, completedExercises, toggleComplete, completePlan, resetPlan, trainingHistory } = usePlan();
 
+  // History detail modal state
+  const [selectedPlan, setSelectedPlan] = React.useState<CompletedPlan | null>(null);
+
   const isSetPlayable = (exIdx: number, setIdx: number) => {
     // 0-indexed 组打卡判断
     if (setIdx === 0) {
-      // 第一组，永远可以点击。如果要取消，下一组必须为未打勾状态
       if (completedExercises.has(`${exIdx}-0`)) {
         return !completedExercises.has(`${exIdx}-1`);
       }
@@ -66,10 +73,8 @@ export default function TrainScreen() {
     const nextKey = `${exIdx}-${setIdx + 1}`;
     
     if (completedExercises.has(currentKey)) {
-      // 已经完成了。如果需要取消打勾，下一组必须是未完成状态
       return !completedExercises.has(nextKey);
     } else {
-      // 还没完成。如果需要点击打勾，前一组必须是已完成状态
       return completedExercises.has(prevKey);
     }
   };
@@ -157,7 +162,7 @@ export default function TrainScreen() {
                           backgroundColor: done 
                             ? 'rgba(52, 199, 89, 0.15)' 
                             : 'transparent',
-                          opacity: playable ? 1 : 0.35, // 未解锁灰度
+                          opacity: playable ? 1 : 0.35,
                         }]}>
                         <Text style={[styles.setChipText, { color: done ? successCol : playable ? textCol : subTextCol }]}>
                           {!playable ? '🔒 ' : done ? '✓ ' : '○ '}第{setIdx + 1}组
@@ -186,60 +191,114 @@ export default function TrainScreen() {
             <Text style={[styles.sectionTitle, { color: textCol }]}>训练历史</Text>
             <View style={styles.timeline}>
               {trainingHistory.map((plan, idx) => (
-                <HistoryCard key={idx} plan={plan} isDark={isDark} bg={cardBg} border={borderCol} text={textCol} sub={subTextCol} />
+                <HistoryCard key={idx} plan={plan} isDark={isDark} bg={cardBg} border={borderCol} text={textCol} sub={subTextCol} onPress={() => setSelectedPlan(plan)} />
               ))}
             </View>
           </View>
         )}
       </ScrollView>
+
+      {/* History Detail Modal */}
+      {selectedPlan && (
+        <Modal animationType="slide" transparent visible={!!selectedPlan} onRequestClose={() => setSelectedPlan(null)}>
+          <View style={styles.modalOverlay}>
+            <View style={[styles.modalContent, { backgroundColor: cardBg, borderColor: borderCol }]}>
+              <View style={styles.modalHeader}>
+                <View style={{ flex: 1 }}>
+                  <Text style={[styles.modalTitle, { color: textCol }]}>{selectedPlan.title}</Text>
+                  <Text style={{ fontSize: 12, color: subTextCol, marginTop: 4 }}>{formatDate(selectedPlan.completedAt)} · 已完成</Text>
+                </View>
+                <TouchableOpacity activeOpacity={0.7} style={[styles.closeBtn, { backgroundColor: isDark ? '#2C2C30' : '#E5E5EA' }]} onPress={() => setSelectedPlan(null)}>
+                  <Text style={{ fontSize: 13, fontWeight: '700', color: textCol }}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView style={{ flex: 1 }} contentContainerStyle={{ padding: 16 }}>
+                {selectedPlan.exercises.map((ex, exIdx) => {
+                  const completedForEx = selectedPlan.completedKeys?.filter(k => k.startsWith(`${exIdx}-`)).length || 0;
+                  const ratio = ex.sets > 0 ? Math.min(completedForEx / ex.sets, 1) : 0;
+                  
+                  return (
+                    <View key={exIdx} style={{ marginBottom: 12, borderRadius: 12, overflow: 'hidden', backgroundColor: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)', borderColor: borderCol, borderWidth: 0.5 }}>
+                      <View style={{ position: 'absolute', top: 0, bottom: 0, left: 0, width: `${ratio * 100}%`, backgroundColor: 'rgba(52,199,89,0.15)' }} />
+                      <View style={{ padding: 14, flexDirection: 'row', alignItems: 'center' }}>
+                        <View style={{ width: 22, height: 22, borderRadius: 11, backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)', justifyContent: 'center', alignItems: 'center', marginRight: 10 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '700', color: textCol }}>{exIdx + 1}</Text>
+                        </View>
+                        <View style={{ flex: 1 }}>
+                          <Text style={{ fontSize: 15, fontWeight: '700', color: textCol, marginBottom: 4 }}>{ex.name}</Text>
+                          <Text style={{ fontSize: 12, color: subTextCol }}>计划: {ex.sets} 组 × {ex.reps}{ex.weight ? ` · ${ex.weight}` : ''}</Text>
+                        </View>
+                        <Text style={{ fontSize: 14, fontWeight: '700', color: ratio === 1 ? '#34C759' : textCol }}>
+                          {completedForEx}/{ex.sets}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                })}
+              </ScrollView>
+
+              <TouchableOpacity activeOpacity={0.7} style={{ margin: 16, paddingVertical: 14, borderRadius: 14, backgroundColor: accentCol, alignItems: 'center' }} onPress={() => setSelectedPlan(null)}>
+                <Text style={{ color: '#FFFFFF', fontWeight: '700', fontSize: 14 }}>返回</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      )}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  scrollContent: { paddingHorizontal: 20 },
-  section: { marginBottom: 24 },
-  sectionTitle: { fontSize: 18, fontWeight: '800', marginBottom: 14, letterSpacing: -0.5 },
-  header: { marginBottom: 20 },
-  title: { fontSize: 22, fontWeight: '800', letterSpacing: -0.8, marginBottom: 10 },
-  disclaimerBox: { borderRadius: 10, padding: 12, marginBottom: 14 },
-  disclaimerText: { fontSize: 12, fontWeight: '600', lineHeight: 18 },
-  progressBar: { height: 8, borderRadius: 4, marginBottom: 8, overflow: 'hidden' },
-  progressFill: { height: '100%', borderRadius: 4 },
-  progressText: { fontSize: 13, fontWeight: '600' },
-  exerciseCard: { borderRadius: 16, borderWidth: 0.5, padding: 16, marginBottom: 12 },
-  exerciseHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 8 },
-  exNum: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
-  exNumText: { fontSize: 13, fontWeight: '700' },
+  scrollContent: { paddingHorizontal: 16 },
+  section: { marginBottom: 18 },
+  sectionTitle: { fontSize: 16, fontWeight: '800', marginBottom: 10, letterSpacing: -0.4 },
+  header: { marginBottom: 14 },
+  title: { fontSize: 20, fontWeight: '800', letterSpacing: -0.6, marginBottom: 8 },
+  disclaimerBox: { borderRadius: 8, padding: 10, marginBottom: 10 },
+  disclaimerText: { fontSize: 11, fontWeight: '600', lineHeight: 16 },
+  progressBar: { height: 6, borderRadius: 3, marginBottom: 6, overflow: 'hidden' },
+  progressFill: { height: '100%', borderRadius: 3 },
+  progressText: { fontSize: 12, fontWeight: '600' },
+  exerciseCard: { borderRadius: 12, borderWidth: 0.5, padding: 12, marginBottom: 10 },
+  exerciseHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
+  exNum: { width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
+  exNumText: { fontSize: 12, fontWeight: '700' },
   exInfo: { flex: 1 },
-  exName: { fontSize: 16, fontWeight: '700', marginBottom: 2 },
-  exMeta: { fontSize: 13 },
-  exNotes: { fontSize: 12, fontStyle: 'italic', marginBottom: 12, paddingLeft: 40 },
-  setRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingLeft: 40 },
-  setChip: { borderWidth: 1, borderRadius: 10, paddingVertical: 8, paddingHorizontal: 14 },
-  setChipText: { fontSize: 13, fontWeight: '600' },
-  actionRow: { flexDirection: 'row', gap: 10, marginTop: 8 },
-  finishBtn: { flex: 1, borderRadius: 16, paddingVertical: 15, alignItems: 'center' },
-  finishBtnText: { color: '#FFFFFF', fontSize: 15, fontWeight: '700' },
-  cancelBtn: { borderRadius: 16, paddingVertical: 15, paddingHorizontal: 20, alignItems: 'center', borderWidth: 1 },
-  cancelBtnText: { fontSize: 14, fontWeight: '600' },
-  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 40 },
-  emptyIcon: { fontSize: 48, marginBottom: 16 },
-  emptyTitle: { fontSize: 20, fontWeight: '700', marginBottom: 8 },
-  emptySub: { fontSize: 14, textAlign: 'center', lineHeight: 22 },
+  exName: { fontSize: 15, fontWeight: '700', marginBottom: 1 },
+  exMeta: { fontSize: 12 },
+  exNotes: { fontSize: 11, fontStyle: 'italic', marginBottom: 8, paddingLeft: 34 },
+  setRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, paddingLeft: 34 },
+  setChip: { borderWidth: 0.5, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
+  setChipText: { fontSize: 12, fontWeight: '600' },
+  actionRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
+  finishBtn: { flex: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  finishBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
+  cancelBtn: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderWidth: 0.5 },
+  cancelBtnText: { fontSize: 13, fontWeight: '600' },
+  emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
+  emptyIcon: { fontSize: 40, marginBottom: 12 },
+  emptyTitle: { fontSize: 18, fontWeight: '700', marginBottom: 6 },
+  emptySub: { fontSize: 13, textAlign: 'center', lineHeight: 20 },
   // Timeline
   timeline: { gap: 0 },
-  historyCard: { borderRadius: 14, borderWidth: 0.5, marginBottom: 12, overflow: 'hidden' },
-  historyLeft: { position: 'absolute', left: 14, top: 0, bottom: 0, alignItems: 'center', paddingTop: 18 },
-  historyDot: { width: 10, height: 10, borderRadius: 5 },
-  historyLine: { width: 2, flex: 1, marginTop: 4 },
-  historyContent: { paddingLeft: 36, padding: 16 },
-  historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
-  historyTitle: { fontSize: 15, fontWeight: '700', flex: 1 },
-  historyBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginLeft: 8 },
-  historyBadgeText: { fontSize: 10, fontWeight: '700' },
-  historyMeta: { fontSize: 11, marginBottom: 8 },
+  historyCard: { borderRadius: 12, borderWidth: 0.5, marginBottom: 10, overflow: 'hidden' },
+  historyLeft: { position: 'absolute', left: 12, top: 0, bottom: 0, alignItems: 'center', paddingTop: 14 },
+  historyDot: { width: 8, height: 8, borderRadius: 4 },
+  historyLine: { width: 1.5, flex: 1, marginTop: 4 },
+  historyContent: { paddingLeft: 30, padding: 12 },
+  historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 3 },
+  historyTitle: { fontSize: 14, fontWeight: '700', flex: 1 },
+  historyBadge: { paddingHorizontal: 6, paddingVertical: 1.5, borderRadius: 5, marginLeft: 6 },
+  historyBadgeText: { fontSize: 9, fontWeight: '700' },
+  historyMeta: { fontSize: 10, marginBottom: 6 },
   historyExercises: { gap: 2 },
-  historyExItem: { fontSize: 11 },
+  historyExItem: { fontSize: 10 },
+  // Modals
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 20 },
+  modalContent: { width: '100%', maxWidth: 480, height: '70%', borderRadius: 20, borderWidth: 0.5, overflow: 'hidden' },
+  modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, borderBottomWidth: 0.5, borderBottomColor: '#2C2C2E' },
+  modalTitle: { fontSize: 16, fontWeight: '800', letterSpacing: -0.4 },
+  closeBtn: { width: 28, height: 28, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
 });

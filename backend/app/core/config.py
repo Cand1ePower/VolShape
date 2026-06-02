@@ -16,6 +16,13 @@ class Settings:
     LLM_LIGHT_MODEL: str = os.getenv("LLM_LIGHT_MODEL", "deepseek-chat")
     LLM_HEAVY_MODEL: str = os.getenv("LLM_HEAVY_MODEL", "deepseek-chat")
 
+    # Embedding API (For mem0)
+    EMBEDDING_API_KEY: str = os.getenv("EMBEDDING_API_KEY", "")
+    EMBEDDING_BASE_URL: str = os.getenv("EMBEDDING_BASE_URL", "")
+    EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "")
+    EMBEDDING_DIMS: int = int(os.getenv("EMBEDDING_DIMS", "768"))
+
+
     # Tavily Web Search
     TAVILY_API_KEY: str = os.getenv("TAVILY_API_KEY", "")
 
@@ -25,4 +32,6 @@ class Settings:
     LANGFUSE_HOST: str = os.getenv("LANGFUSE_HOST", "https://cloud.langfuse.com")
 
 settings = Settings()
+
+
 

@@ -7,6 +7,7 @@ class AgentState(TypedDict):
     user_id: str
     session_id: str
     mode: str  # "quick" or "detailed"
+    use_training_sheet: Optional[bool]
 
     # Intent routing
     intent: str  # "training_plan" | "diet_log" | "chat" | "profile_update"

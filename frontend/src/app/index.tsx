@@ -11,7 +11,10 @@ import {
   ScrollView,
   TextInput,
   TouchableOpacity,
-  Modal
+  Modal,
+  Animated,
+  Easing,
+  Keyboard,
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { connectChatStream } from '../services/sse';
@@ -20,6 +23,8 @@ import { DietCard } from '../components/ui/DietCard';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlan } from '../contexts/PlanContext';
 import { LinearGradient } from 'expo-linear-gradient';
+import { Ionicons } from '@expo/vector-icons';
+import { useNavigation } from 'expo-router';
 
 // 自定义商业级 Message 强类型结构
 interface Message {
@@ -68,6 +73,220 @@ export default function ChatScreen() {
 
   // Chat mode
   const [mode, setMode] = useState<'quick' | 'detailed'>('quick');
+  const [useTrainingSheet, setUseTrainingSheet] = useState(false);
+
+  // Animation refs for mode capsule and training sheet button
+  const sheetAnim = useRef(new Animated.Value(1)).current; // 0=expanded 1=collapsed (default 1, collapsed)
+  const capsuleAnim = useRef(new Animated.Value(0)).current; // 0=quick 1=detailed
+
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const navigation = useNavigation();
+
+  // Scroll visibility for Tab Bar
+  const [isTabBarHidden, setIsTabBarHidden] = useState(false);
+  const lastScrollY = useRef(0);
+  const tabBarTranslateAnim = useRef(new Animated.Value(0)).current;
+
+  // 键盘避让自适应状态与 refs
+  const keyboardOffset = useRef(new Animated.Value(0)).current;
+  const containerHeight = useRef(0);
+  const currentResizeHeight = useRef(0);
+  const activeKeyboardHeight = useRef(0);
+  const lastHeight = useRef(0); // 记录上一次布局高度以侦测单调性高度恢复
+  const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const [thinkingSteps, setThinkingSteps] = useState<{ node: string; message: string; timestamp: Date }[]>([]);
+
+  // 统一的键盘避让差额校准平移动画
+  const adjustKeyboardOffset = useCallback((duration = 220) => {
+    // 补足平移量 = 键盘总高度 - 布局已 resize 顶起的高度
+    const targetOffset = Math.max(0, activeKeyboardHeight.current - currentResizeHeight.current);
+    
+    Animated.timing(keyboardOffset, {
+      toValue: targetOffset,
+      duration: duration,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [keyboardOffset]);
+
+  // 智能注册键盘避让监听器
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      (e) => {
+        setIsKeyboardVisible(true);
+        setIsTabBarHidden(false); // 展开键盘时，强行恢复底栏和输入框显示
+
+        activeKeyboardHeight.current = e.endCoordinates.height;
+        adjustKeyboardOffset(e.duration || 250);
+      }
+    );
+
+    const hideSubscription = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide',
+      (e) => {
+        setIsKeyboardVisible(false);
+
+        activeKeyboardHeight.current = 0;
+        adjustKeyboardOffset(220); // 采用 220ms 跟手时长平滑落回
+      }
+    );
+
+    return () => {
+      showSubscription.remove();
+      hideSubscription.remove();
+    };
+  }, [adjustKeyboardOffset]);
+
+  // 初始化绑定 Option，并启用绝对定位平移
+  useEffect(() => {
+    navigation.setOptions({
+      tabBarStyle: {
+        backgroundColor: isDark ? 'rgba(20, 20, 26, 0.85)' : 'rgba(255, 255, 255, 0.88)',
+        borderTopWidth: 0.5,
+        borderTopColor: isDark ? 'rgba(255, 255, 255, 0.05)' : 'rgba(0, 0, 0, 0.03)',
+        shadowColor: 'transparent',
+        elevation: 0,
+        paddingBottom: Platform.OS === 'ios' ? 22 : 8,
+        paddingTop: 8,
+        height: Platform.OS === 'ios' ? 76 : 58,
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        right: 0,
+        transform: [{ translateY: tabBarTranslateAnim }],
+        ...(Platform.OS === 'web'
+          ? { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any
+          : {})
+      }
+    });
+  }, [isDark, navigation]);
+
+  // 驱动平移动画
+  useEffect(() => {
+    Animated.timing(tabBarTranslateAnim, {
+      toValue: isTabBarHidden ? 100 : 0,
+      duration: 300,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [isTabBarHidden]);
+
+  const handleScroll = (event: any) => {
+    if (isKeyboardVisible) {
+      return; // 键盘展开时，绝对禁止随滑动上下隐藏/显示聊天栏，让其稳稳贴在键盘上！
+    }
+    const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+    const currentY = contentOffset.y;
+    const delta = currentY - lastScrollY.current;
+
+    // 已经拉到最底部，强制将底栏划出
+    const isAtBottom = layoutMeasurement.height + currentY >= contentSize.height - 40;
+    if (isAtBottom) {
+      if (isTabBarHidden) {
+        setIsTabBarHidden(false);
+      }
+      lastScrollY.current = currentY;
+      return;
+    }
+
+    if (Math.abs(delta) < 6) return;
+
+    if (currentY < 50) {
+      if (isTabBarHidden) {
+        setIsTabBarHidden(false);
+      }
+      lastScrollY.current = currentY;
+      return;
+    }
+
+    if (delta > 0) {
+      // 向上滑动屏幕查看底部（往新消息方向）：滑出底栏
+      if (isTabBarHidden) {
+        setIsTabBarHidden(false);
+      }
+    } else if (delta < 0) {
+      // 向下滑动屏幕查看历史记录（往旧消息方向）：隐藏底栏
+      if (!isTabBarHidden) {
+        setIsTabBarHidden(true);
+      }
+    }
+    lastScrollY.current = currentY;
+  };
+
+  const handleModeChange = useCallback((newMode: 'quick' | 'detailed') => {
+    setMode(newMode);
+    Animated.timing(capsuleAnim, {
+      toValue: newMode === 'quick' ? 0 : 1,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+    // Expert mode auto-enables training sheet
+    if (newMode === 'detailed') {
+      setUseTrainingSheet(true);
+      
+      // 触发短暂展开 2 秒让用户感知，然后自动收起
+      Animated.timing(sheetAnim, {
+        toValue: 0,
+        duration: 220,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }).start();
+      
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        Animated.timing(sheetAnim, {
+          toValue: 1,
+          duration: 250,
+          easing: Easing.out(Easing.cubic),
+          useNativeDriver: false,
+        }).start();
+      }, 2000);
+    } else if (newMode === 'quick') {
+      // 快速模式自动关闭训练表模式
+      setUseTrainingSheet(false);
+      Animated.timing(sheetAnim, {
+        toValue: 1,
+        duration: 250,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }).start();
+    }
+  }, [capsuleAnim, sheetAnim]);
+
+  const handleToggleSheet = useCallback(() => {
+    setUseTrainingSheet((prev) => !prev);
+
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+    }
+
+    // 展开
+    Animated.timing(sheetAnim, {
+      toValue: 0,
+      duration: 220,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: false,
+    }).start();
+
+    // 2秒后自动收缩
+    timerRef.current = setTimeout(() => {
+      Animated.timing(sheetAnim, {
+        toValue: 1,
+        duration: 250,
+        easing: Easing.out(Easing.cubic),
+        useNativeDriver: false,
+      }).start();
+    }, 1000);
+  }, [sheetAnim]);
+
+  // 组件卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []);
 
   // 聊天消息列表状态
   const [messages, setMessages] = useState<Message[]>([]);
@@ -149,7 +368,9 @@ export default function ChatScreen() {
     // 1. 追加用户消息
     setMessages((prev) => [...prev, userMsg]);
     setIsGenerating(true);
-    setAgentStatus({ node: 'Intent Classifier', message: '分析用户输入意图并静默同步记忆...' });
+    const initialStatus = { node: 'Intent Classifier', message: '分析用户输入意图并静默同步记忆...' };
+    setAgentStatus(initialStatus);
+    setThinkingSteps([{ ...initialStatus, timestamp: new Date() }]);
     scrollToBottom(true);
 
     // 2. 创建机器人的空消息以备流式追加
@@ -177,6 +398,7 @@ export default function ChatScreen() {
         user_input: userText,
         session_id: sessionId || 'default',
         mode: mode,
+        use_training_sheet: useTrainingSheet,
       },
       {
         onOpen: () => {
@@ -184,6 +406,12 @@ export default function ChatScreen() {
         },
         onState: (state) => {
           setAgentStatus(state);
+          setThinkingSteps((prev) => {
+            if (prev.some(step => step.node === state.node && step.message === state.message)) {
+              return prev;
+            }
+            return [...prev, { ...state, timestamp: new Date() }];
+          });
           scrollToBottom(true);
         },
         onToken: (tokenText) => {
@@ -228,7 +456,7 @@ export default function ChatScreen() {
         },
       }
     );
-  }, [inputText, isGenerating, token, mode, sessionId]);
+  }, [inputText, isGenerating, token, mode, sessionId, useTrainingSheet]);
 
   // 主题配色
   const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
@@ -240,7 +468,35 @@ export default function ChatScreen() {
   const botBubbleBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
 
   return (
-    <View style={[styles.container, { backgroundColor: bgCol }]}>
+    <View 
+      style={[styles.container, { backgroundColor: bgCol }]}
+      onLayout={(e) => {
+        const { height: newHeight } = e.nativeEvent.layout;
+        // 如果是首次加载，记录正常高度
+        if (containerHeight.current === 0) {
+          containerHeight.current = newHeight;
+        } else {
+          // 核心单调递增监测：若当前高度大于上一次高度，说明布局被系统拉伸（软键盘已开始缩回）！
+          if (lastHeight.current > 0 && newHeight > lastHeight.current && newHeight > containerHeight.current - 180) {
+            currentResizeHeight.current = 0;
+            if (activeKeyboardHeight.current > 0) {
+              activeKeyboardHeight.current = 0; // 瞬间归 0 驱动避让动画回落
+              setIsKeyboardVisible(false);       // 瞬间将 bottom 变回 80 / 62，完美顺应高度恢复
+            }
+          } else {
+            // 如果布局处于被压缩状态，正常计算 resize 高度
+            if (newHeight < containerHeight.current - 50) {
+              currentResizeHeight.current = containerHeight.current - newHeight;
+            } else {
+              currentResizeHeight.current = 0;
+            }
+          }
+          // 一旦布局高度改变，立即二次微调平移偏置，在 220ms 内极其顺滑地归位
+          adjustKeyboardOffset(220);
+        }
+        lastHeight.current = newHeight;
+      }}
+    >
       {/* Header (Gradient Transparent) */}
       <LinearGradient
         colors={[
@@ -281,17 +537,14 @@ export default function ChatScreen() {
       )}
 
       {/* 核心大厂级高度响应式消息流区域 */}
-      <KeyboardAvoidingView
-        style={styles.keyboardContainer}
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.chatScroll}
+        contentContainerStyle={styles.chatContent}
+        scrollEventThrottle={16}
+        onScroll={handleScroll}
+        onContentSizeChange={() => scrollToBottom(true)}
       >
-        <ScrollView
-          ref={scrollViewRef}
-          style={styles.chatScroll}
-          contentContainerStyle={styles.chatContent}
-          onContentSizeChange={() => scrollToBottom(true)}
-        >
           <View style={styles.maxWidthContainer}>
             {messages.map((msg) => (
               <View
@@ -343,6 +596,33 @@ export default function ChatScreen() {
                     >
                       {msg.text}
                     </Text>
+                  ) : isGenerating && msg.isBot && messages[messages.length - 1]?.id === msg.id ? (
+                    <View style={styles.thinkingConsole}>
+                      <View style={styles.consoleHeader}>
+                        <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />
+                        <Text style={[styles.consoleTitle, { color: textCol }]}>智能体引擎推理中...</Text>
+                      </View>
+                      <View style={styles.consoleSteps}>
+                        {thinkingSteps.map((step, idx) => {
+                          const isLast = idx === thinkingSteps.length - 1;
+                          return (
+                            <View key={idx} style={styles.consoleStepRow}>
+                              <Text style={[styles.stepStatus, { color: isLast ? '#007AFF' : '#34C759' }]}>
+                                {isLast ? '⚡' : '✓'}
+                              </Text>
+                              <View style={styles.stepContent}>
+                                <Text style={[styles.stepNode, { color: isLast ? '#007AFF' : (isDark ? '#FFFFFF' : '#1C1C1E'), fontWeight: '700' }]}>
+                                  [{step.node}]
+                                </Text>
+                                <Text style={[styles.stepDesc, { color: subTextCol }]}>
+                                  {step.message}
+                                </Text>
+                              </View>
+                            </View>
+                          );
+                        })}
+                      </View>
+                    </View>
                   ) : isGenerating && msg.isBot ? (
                     <ActivityIndicator size="small" color="#007AFF" />
                   ) : null}
@@ -361,52 +641,138 @@ export default function ChatScreen() {
               </View>
             ))}
           </View>
-        </ScrollView>
+      </ScrollView>
 
-        {/* Input Area */}
-        <View style={[
-          styles.inputArea,
-          { paddingBottom: Platform.OS === 'ios' ? insets.bottom + 4 : 20 }
-        ]}>
-          {/* Mode Toggle */}
-          <View style={styles.modeToggle}>
-            <TouchableOpacity activeOpacity={0.7} style={[styles.modeChip, mode === 'quick' && styles.modeChipActive]} onPress={() => setMode('quick')}>
-              <Text style={[styles.modeChipText, mode === 'quick' && styles.modeChipTextActive]}>快速模式</Text>
-            </TouchableOpacity>
-            <TouchableOpacity activeOpacity={0.7} style={[styles.modeChip, mode === 'detailed' && styles.modeChipActive]} onPress={() => setMode('detailed')}>
-              <Text style={[styles.modeChipText, mode === 'detailed' && styles.modeChipTextActive]}>专家模式</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={[
-            styles.inputWrapper,
+      {/* ── Floating Input Area ── */}
+      <Animated.View style={[
+        styles.floatingControls,
+        {
+          bottom: isKeyboardVisible 
+            ? (Platform.OS === 'ios' ? -24 : -26) 
+            : (Platform.OS === 'ios' ? 80 : 62),
+          transform: [
             {
-              backgroundColor: inputBg,
-              borderColor: isDark ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.06)',
+              translateY: tabBarTranslateAnim.interpolate({
+                inputRange: [0, 100],
+                outputRange: [0, Platform.OS === 'ios' ? 48 : 48]
+              })
+            },
+            {
+              translateY: keyboardOffset.interpolate({
+                inputRange: [0, 0.1, 1000],
+                outputRange: [
+                  0, 
+                  Platform.OS === 'ios' ? -104 : -88, 
+                  -1000
+                ]
+              })
+            }
+          ]
+        }
+      ]}>
+        {/* Control Bar: Mode Capsule (Left) + Training Sheet (Right) */}
+        <View style={styles.controlBar}>
+
+          {/* Mode Capsule — iOS-style Segmented Control */}
+          <View style={[
+            styles.modeCapsule,
+            {
+              backgroundColor: isDark ? 'rgba(20, 20, 26, 0.85)' : 'rgba(255, 255, 255, 0.92)',
+              borderColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)',
+              ...(Platform.OS === 'web'
+                ? { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any
+                : {}),
             }
           ]}>
-            <TextInput
-              style={[styles.textInput, { color: textCol, fontSize: dynamicFontSize }]}
-              value={inputText}
-              onChangeText={setInputText}
-              placeholder="给 AI 教练发消息..."
-              placeholderTextColor={isDark ? '#5C5C60' : '#8E8E93'}
-              multiline
-              maxLength={500}
-              editable={!isGenerating}
-              onSubmitEditing={handleSend}
-            />
-            <TouchableOpacity
-              activeOpacity={0.8}
-              disabled={isGenerating || !inputText.trim()}
-              style={[styles.sendBtn, { backgroundColor: (isGenerating || !inputText.trim()) ? (isDark ? '#2C2C30' : '#E5E5EA') : '#007AFF' }]}
-              onPress={handleSend}
-            >
-              <Text style={[styles.sendBtnText, { color: (isGenerating || !inputText.trim()) ? '#8E8E93' : '#FFFFFF' }]}>↑</Text>
+            <Animated.View style={[
+              styles.capsuleSlider,
+              { left: capsuleAnim.interpolate({ inputRange: [0, 1], outputRange: [2, 46] }) }
+            ]} />
+            <TouchableOpacity style={styles.capsuleOption} onPress={() => handleModeChange('quick')} activeOpacity={0.8}>
+              <Text style={[styles.capsuleText, { color: mode === 'quick' ? '#FFFFFF' : (isDark ? '#AEAEB2' : '#8E8E93'), fontSize: 11 }]}>快速</Text>
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.capsuleOption} onPress={() => handleModeChange('detailed')} activeOpacity={0.8}>
+              <Text style={[styles.capsuleText, { color: mode === 'detailed' ? '#FFFFFF' : (isDark ? '#AEAEB2' : '#8E8E93'), fontSize: 11 }]}>专家</Text>
             </TouchableOpacity>
           </View>
+
+          {/* Training Sheet Button */}
+          <Animated.View style={[
+            styles.sheetBtn,
+            {
+              width: sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [76, 28] }),
+              backgroundColor: useTrainingSheet
+                ? '#007AFF'
+                : (isDark ? 'rgba(20, 20, 26, 0.85)' : 'rgba(255, 255, 255, 0.92)'),
+              borderColor: useTrainingSheet
+                ? '#007AFF'
+                : (isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)'),
+              ...(Platform.OS === 'web'
+                ? { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any
+                : {}),
+            }
+          ]}>
+            <TouchableOpacity style={styles.sheetBtnInner} onPress={handleToggleSheet} activeOpacity={0.75}>
+              <Ionicons
+                name="list-outline"
+                size={14}
+                color={useTrainingSheet ? '#FFFFFF' : (isDark ? '#AEAEB2' : '#8E8E93')}
+              />
+              <Animated.Text
+                numberOfLines={1}
+                style={[
+                  styles.sheetBtnText,
+                  {
+                    color: useTrainingSheet ? '#FFFFFF' : (isDark ? '#AEAEB2' : '#8E8E93'),
+                    opacity: sheetAnim.interpolate({ inputRange: [0, 0.4, 1], outputRange: [1, 0, 0] }),
+                    maxWidth: sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [42, 0] }),
+                    marginLeft: sheetAnim.interpolate({ inputRange: [0, 1], outputRange: [3, 0] }),
+                    fontSize: 11,
+                  }
+                ]}
+              >
+                训练表
+              </Animated.Text>
+            </TouchableOpacity>
+          </Animated.View>
         </View>
-      </KeyboardAvoidingView>
+
+        {/* Frosted Glass Input Box */}
+        <View style={[
+          styles.floatingInput,
+          {
+            backgroundColor: isDark ? 'rgba(20, 20, 26, 0.85)' : 'rgba(255, 255, 255, 0.92)',
+            borderColor: isDark ? 'rgba(0, 122, 255, 0.2)' : 'rgba(0, 122, 255, 0.12)',
+            shadowColor: '#007AFF',
+            ...(Platform.OS === 'web'
+              ? { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any
+              : {}),
+          }
+        ]}>
+          <TextInput
+            style={[styles.textInput, { color: textCol, fontSize: dynamicFontSize }]}
+            value={inputText}
+            onChangeText={setInputText}
+            placeholder="给 AI 教练发消息..."
+            placeholderTextColor={isDark ? '#5C5C60' : '#8E8E93'}
+            multiline
+            maxLength={500}
+            editable={!isGenerating}
+            onSubmitEditing={handleSend}
+          />
+          <TouchableOpacity
+            activeOpacity={0.8}
+            disabled={isGenerating || !inputText.trim()}
+            style={[
+              styles.sendBtn,
+              { backgroundColor: (isGenerating || !inputText.trim()) ? (isDark ? '#2C2C30' : '#E5E5EA') : '#007AFF' }
+            ]}
+            onPress={handleSend}
+          >
+            <Text style={[styles.sendBtnText, { color: (isGenerating || !inputText.trim()) ? '#8E8E93' : '#FFFFFF' }]}>↑</Text>
+          </TouchableOpacity>
+        </View>
+      </Animated.View>
 
     </View>
   );
@@ -457,9 +823,15 @@ const styles = StyleSheet.create({
   statusNode: { fontSize: 12, fontWeight: '700' },
   statusMessage: { fontSize: 12, flex: 1 },
   // ── Chat ──
-  keyboardContainer: { flex: 1, width: '100%', alignItems: 'center', flexDirection: 'column' },
+  keyboardContainer: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    zIndex: 20,
+  },
   chatScroll: { flex: 1, width: '100%' },
-  chatContent: { alignItems: 'center', paddingTop: 100, paddingBottom: 20, paddingHorizontal: 16, width: '100%' },
+  chatContent: { alignItems: 'center', paddingTop: 100, paddingBottom: 215, paddingHorizontal: 16, width: '100%' },
 
   maxWidthContainer: { width: '100%', maxWidth: 760, gap: 20 },
   messageRow: { width: '100%', flexDirection: 'row', marginVertical: 4 },
@@ -477,26 +849,141 @@ const styles = StyleSheet.create({
   },
   messageText: { flexShrink: 1, lineHeight: 22, fontSize: 15 },
   cardContainer: { marginTop: 12, width: '100%' },
-  // ── Input ──
-  inputArea: {
-    width: '100%', maxWidth: 780, alignSelf: 'center',
-    paddingHorizontal: 16,
-    paddingTop: 8,
+
+  // ── Thinking Console ──
+  thinkingConsole: {
+    padding: 2,
+    minWidth: 240,
+  },
+  consoleHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: 'transparent',
+    marginBottom: 10,
+  },
+  consoleTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: -0.3,
+  },
+  consoleSteps: {
+    gap: 8,
+    borderLeftWidth: 1,
+    borderLeftColor: 'rgba(0, 122, 255, 0.15)',
+    paddingLeft: 12,
+    marginLeft: 6,
+  },
+  consoleStepRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 8,
+  },
+  stepStatus: {
+    fontSize: 10,
+    marginTop: 2,
+  },
+  stepContent: {
+    flex: 1,
+  },
+  stepNode: {
+    fontSize: 11,
+    fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }),
+    fontWeight: '700',
+  },
+  stepDesc: {
+    fontSize: 10,
+    marginTop: 1,
   },
 
-  modeToggle: { flexDirection: 'row', gap: 8, marginBottom: 12, alignSelf: 'center' },
-  modeChip: { paddingVertical: 6, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: 'transparent', backgroundColor: 'rgba(0,122,255,0.06)' },
-  modeChipActive: { backgroundColor: '#007AFF', shadowColor: '#007AFF', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.3, shadowRadius: 6, elevation: 3 },
-  modeChipText: { fontSize: 13, fontWeight: '600', color: '#8E8E93' },
-  modeChipTextActive: { color: '#FFFFFF' },
-  inputWrapper: {
-    width: '100%', borderRadius: 32, borderWidth: 0.5,
-    flexDirection: 'row', alignItems: 'center',
-    paddingHorizontal: 20, paddingVertical: 8,
-    shadowColor: '#000', shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.1, shadowRadius: 20, elevation: 5,
+  // ── Floating Input Area ──
+  floatingControls: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    zIndex: 20,
+    alignSelf: 'center',
+    width: '100%',
+    maxWidth: 780,
+    paddingHorizontal: 16,
+    paddingTop: 6,
+    alignItems: 'center',
+    backgroundColor: 'transparent',
+    gap: 8,
+  },
+  controlBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    width: '100%',
+    paddingHorizontal: 4,
+    marginBottom: 2,
+  },
+  // Training Sheet Button
+  sheetBtn: {
+    height: 28,
+    borderRadius: 14,
+    borderWidth: 0.5,
+    overflow: 'hidden',
+  },
+  sheetBtnInner: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 0,
+  },
+  sheetIcon: { fontSize: 13 },
+  sheetBtnText: {
+    fontSize: 11,
+    fontWeight: '600',
+    overflow: 'hidden',
+  },
+  // Mode Capsule (Segmented Control)
+  modeCapsule: {
+    height: 28,
+    width: 92,
+    borderRadius: 14,
+    borderWidth: 0.5,
+    flexDirection: 'row',
+    position: 'relative',
+    padding: 2,
+    overflow: 'hidden',
+  },
+  capsuleSlider: {
+    position: 'absolute',
+    top: 2,
+    width: 44,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: '#007AFF',
+    shadowColor: '#007AFF',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.35,
+    shadowRadius: 5,
+    elevation: 3,
+  },
+  capsuleOption: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1,
+  },
+  capsuleText: {
+    fontSize: 11,
+    fontWeight: '600',
+  },
+  // Frosted Glass Input
+  floatingInput: {
+    width: '100%',
+    borderRadius: 28,
+    borderWidth: 0.5,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    shadowOffset: { width: 0, height: -3 },
+    shadowOpacity: 0.25,
+    shadowRadius: 15,
+    elevation: 6,
   },
   textInput: {
     flex: 1, maxHeight: 120, paddingVertical: 8, marginRight: 12, fontSize: 15,

@@ -20,6 +20,7 @@ class ChatRequest(BaseModel):
     user_input: str
     session_id: Optional[str] = "default_session"
     mode: Optional[str] = "quick"
+    use_training_sheet: Optional[bool] = False
 
 
 NODE_MESSAGE_MAP = {
@@ -71,7 +72,7 @@ async def _save_message(user_id: str, session_id: str, role: str, content: str, 
     await db.commit()
 
 
-async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id: str, db: AsyncSession):
+async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id: str, db: AsyncSession, use_training_sheet: bool = False):
     # Load conversation history
     history = await _load_history(user_id, session_id, db)
     hist_text = "\n".join(f"{'用户' if m['role'] == 'user' else 'AI'}: {m['content']}" for m in history[-10:])
@@ -81,6 +82,7 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         "user_id": user_id,
         "session_id": session_id,
         "mode": mode,
+        "use_training_sheet": use_training_sheet,
         "intent": "",
         "user_profile": {},
         "mem0_context": "",
@@ -187,7 +189,7 @@ async def chat_stream(request: ChatRequest, user_id: str = Depends(get_current_u
                       db: AsyncSession = Depends(get_db)):
     return EventSourceResponse(
         live_agent_stream(request.user_input, user_id, request.mode or "quick",
-                          request.session_id or "default_session", db),
+                          request.session_id or "default_session", db, request.use_training_sheet or False),
         media_type="text/event-stream",
     )
 

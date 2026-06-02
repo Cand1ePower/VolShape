@@ -169,3 +169,43 @@ async def complete_workout(req: CompleteRequest, user_id: str = Depends(get_curr
     
     await db.commit()
     return {"status": "completed", "plan_id": plan.id}
+
+
+@router.post("/abandon")
+async def abandon_workout(req: SaveProgressRequest, user_id: str = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
+    """
+    用户在训练页点击放弃，将该计划状态物理更新为 "abandoned" (已放弃) 并封档。
+    """
+    plan = await db.get(TrainingPlan, req.plan_id)
+    if not plan or plan.user_id != user_id:
+        raise HTTPException(status_code=404, detail="未找到该训练计划")
+        
+    plan.status = "abandoned"
+    await db.commit()
+    return {"status": "abandoned", "plan_id": plan.id}
+
+
+@router.get("/abandoned_history")
+async def get_abandoned_workout_history(user_id: str = Depends(get_current_user_id), db: AsyncSession = Depends(get_db)):
+    """
+    获取当前用户所有的已放弃训练计划列表。
+    """
+    stmt = select(TrainingPlan).where(
+        TrainingPlan.user_id == user_id,
+        TrainingPlan.status == "abandoned"
+    ).order_by(desc(TrainingPlan.created_at)).limit(20)
+    
+    res = await db.execute(stmt)
+    plans = res.scalars().all()
+    
+    history = []
+    for p in plans:
+        history.append({
+            "id": p.id,
+            "plan_json": p.plan_json,
+            "status": p.status,
+            "target_date": str(p.target_date),
+            "completion_data": p.completion_data
+        })
+        
+    return {"history": history}

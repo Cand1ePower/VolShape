@@ -245,15 +245,18 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     final_response = result.get("final_response", "已为您准备好训练计划！")
     disclaimer = result.get("disclaimer", "如有疼痛请立即停止")
 
-    import uuid
-    ui = {
-        "type": "workout_card",
-        "title": "今日训练计划（快速模式）",
-        "targetMuscles": [],
-        "exercises": [{"name": e.get("name",""), "sets": e.get("sets",3), "reps": e.get("reps","10"), "weight": e.get("weight",""), "notes": e.get("notes","")} for e in exercises],
-        "disclaimer": f"安全评分: {result.get('safety_score', 85)}/100。{disclaimer}",
-    }
-    ui["plan_id"] = str(uuid.uuid4()) # 🌟 仅在 UI 中携带临时 plan_id，数据库无物理写入
+    use_sheet = state.get("use_training_sheet", False)
+    ui = None
+    if use_sheet:
+        import uuid
+        ui = {
+            "type": "workout_card",
+            "title": "今日训练计划（快速模式）",
+            "targetMuscles": [],
+            "exercises": [{"name": e.get("name",""), "sets": e.get("sets",3), "reps": e.get("reps","10"), "weight": e.get("weight",""), "notes": e.get("notes","")} for e in exercises],
+            "disclaimer": f"安全评分: {result.get('safety_score', 85)}/100。{disclaimer}",
+        }
+        ui["plan_id"] = str(uuid.uuid4()) # 🌟 仅在 UI 中携带临时 plan_id，数据库无物理写入
 
     return {"execution_results": {"exercises": exercises, "duration_minutes": result.get("duration_minutes", 40), "estimated_rpe": result.get("estimated_rpe", 5)}, "final_response": final_response, "ui_components": ui, "route": "end"}
 
@@ -408,8 +411,9 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     resp = await _safe_llm_structured(system_prompt=sys, user_prompt=ctx, temperature=0.7, max_tokens=512, fallback={"final_response": "已为您准备好！"})
     final_response = resp.get("final_response", "已为您准备好！")
 
+    use_sheet = state.get("use_training_sheet", False)
     ui = None
-    if intent == "training_plan":
+    if use_sheet:
         if not exercises:
             exercises = [{"name": "全身关节活动与动态拉伸", "sets": 3, "reps": "12", "weight": "自重", "notes": "安全热身，唤醒全身体征"}]
             

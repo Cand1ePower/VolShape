@@ -305,10 +305,31 @@ export function PlanProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activePlan, completed, token]);
 
-  const resetPlan = useCallback(() => {
+  const resetPlan = useCallback(async () => {
+    if (activePlan?.planId && token) {
+      const planId = activePlan.planId;
+      setPlanStatusMap(prev => ({
+        ...prev,
+        [planId]: 'active', // 🌟 重置为可应用状态，聊天框同步更新！
+      }));
+
+      try {
+        await fetch(getWorkoutUrl('/api/workout/abandon'), {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+            Connection: 'close'
+          },
+          body: JSON.stringify({ plan_id: planId, completion_data: {} }),
+        });
+      } catch (e) {
+        console.error('[Abandon Workout Failed]', e);
+      }
+    }
     setActivePlanState(null);
     setCompleted(new Set());
-  }, []);
+  }, [activePlan, token]);
 
   return (
     <PlanContext.Provider value={{

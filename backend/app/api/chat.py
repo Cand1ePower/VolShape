@@ -10,8 +10,10 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.database.models import ConversationMessage
 from app.graphs.workflow import app_workflow
-from app.services.errors import error_payload
 from app.services.quota import QuotaService
+from app.services.tracing import create_trace, finish_trace
+from app.services.errors import AppError
+from app.services.errors import error_payload
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, delete
 
@@ -101,7 +103,20 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         "route": "",
     }
 
-    config = {"configurable": {"db": db}}
+    # 创建 Langfuse 顶级 Trace（必须在 config 构建之前，以便注入到 LangGraph configurable）
+    langfuse_trace, _trace_id = create_trace(
+        user_id=user_id,
+        session_id=session_id,
+        mode=mode,
+        user_input=user_input,
+    )
+
+    config = {
+        "configurable": {
+            "db": db,
+            "langfuse_trace": langfuse_trace,  # 跨节点传播 trace 对象
+        }
+    }
     final_state_snapshot = {}
 
     # Save user message immediately to physical DB
@@ -117,16 +132,6 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         initial_state["mem0_context"] = mem0_context
     except Exception as e:
         print(f"[mem0 Error] {e}")
-
-    # Langfuse observe
-    langfuse_ctx = None
-    try:
-        from langfuse import Langfuse
-        lf = Langfuse(public_key=settings.LANGFUSE_PUBLIC_KEY, secret_key=settings.LANGFUSE_SECRET_KEY, host=settings.LANGFUSE_HOST)
-        langfuse_ctx = lf.observe(name=f"chat_{mode}", user_id=user_id)
-        langfuse_ctx.__enter__()
-    except Exception:
-        pass
 
     try:
         async for chunk in app_workflow.astream(initial_state, config=config):
@@ -169,11 +174,18 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         if ui_card:
             yield {"event": "ui", "data": json.dumps(ui_card)}
 
-        if langfuse_ctx:
-            try:
-                langfuse_ctx.update(output=final_text)
-            except Exception:
-                pass
+        # 完成：更新顶级 Trace 的 output 并 flush
+        finish_trace(
+            langfuse_trace,
+            final_response=final_text,
+            intent=final_state_snapshot.get("intent", ""),
+            metadata={
+                "mode": mode,
+                "session_id": session_id,
+                "has_ui_card": ui_card is not None,
+                "intent": final_state_snapshot.get("intent", ""),
+            },
+        )
 
         yield {"event": "done", "data": ""}
 
@@ -185,11 +197,7 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
         yield {"event": "done", "data": ""}
 
     finally:
-        if langfuse_ctx:
-            try:
-                langfuse_ctx.__exit__(None, None, None)
-            except Exception:
-                pass
+        pass
 
 
 @router.post("/stream")

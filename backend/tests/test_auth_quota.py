@@ -26,6 +26,7 @@ async def test_register_login_refresh_and_me(anyio_backend):
     assert payload["access_token"]
     assert payload["refresh_token"]
     assert payload["user"]["email"] == email
+    assert payload["quota"]["tier"] == "free"
 
     me_resp = client.get("/api/auth/me", headers={"Authorization": f"Bearer {payload['access_token']}"})
     assert me_resp.status_code == 200
@@ -36,6 +37,7 @@ async def test_register_login_refresh_and_me(anyio_backend):
     refresh_resp = client.post("/api/auth/refresh", json={"refresh_token": payload["refresh_token"]})
     assert refresh_resp.status_code == 200
     assert refresh_resp.json()["access_token"]
+    assert refresh_resp.json()["quota"]["tier"] == "free"
 
 
 @pytest.mark.anyio

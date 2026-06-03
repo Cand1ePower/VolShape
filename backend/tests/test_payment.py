@@ -1,9 +1,13 @@
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 from app.main import app
-from app.database.models import WeeklySummary
+from app.database.models import NewApiToken, WeeklySummary
+from app.services.crypto import encrypt_secret
+from app.services.newapi import NewApiService
 from app.services.weekly_report import WeeklyReportGenerator
 import datetime
+import uuid
 
 client = TestClient(app)
 
@@ -36,17 +40,186 @@ async def test_payment_quota_for_regular_and_vip():
 @pytest.mark.anyio
 async def test_payment_checkout_session():
     """
-    测试生成 Stripe 收银台订单
+    测试开发期订阅按钮直接切换套餐
     """
+    user_id = f"test-user-checkout-{datetime.datetime.utcnow().timestamp()}"
     response = client.post(
         "/api/payment/checkout?plan_id=monthly_vip",
-        headers={"Authorization": "Bearer test-user-candlepw"}
+        headers={"Authorization": f"Bearer {user_id}"}
     )
     assert response.status_code == 200
     json_data = response.json()
     assert json_data["plan_id"] == "monthly_vip"
-    assert "stripe.com" in json_data["checkout_url"]
-    assert json_data["status"] == "requires_payment"
+    assert json_data["tier"] == "pro"
+    assert json_data["status"] == "active"
+    assert json_data["quota"]["features"]["detailed"] is True
+
+
+@pytest.mark.anyio
+async def test_subscription_switch_unlocks_expert_mode():
+    """
+    免费账号不能使用专家模式，切换 Pro 后立即解锁。
+    """
+    user_id = f"test-user-subscription-{datetime.datetime.utcnow().timestamp()}"
+    headers = {"Authorization": f"Bearer {user_id}"}
+
+    free_quota = client.get("/api/payment/quota", headers=headers)
+    assert free_quota.status_code == 200
+    assert free_quota.json()["quota"]["tier"] == "free"
+    assert free_quota.json()["quota"]["features"]["detailed"] is False
+
+    locked = client.post(
+        "/api/chat/stream",
+        headers=headers,
+        json={"user_input": "帮我制定一个计划", "mode": "detailed"},
+    )
+    assert locked.status_code == 403
+    assert locked.json()["detail"] == "专家模式需要 Pro 或更高套餐。"
+
+    switched = client.post("/api/payment/checkout?plan_id=monthly_vip", headers=headers)
+    assert switched.status_code == 200
+    assert switched.json()["quota"]["tier"] == "pro"
+    assert switched.json()["quota"]["features"]["detailed"] is True
+    assert switched.json()["current_period_end"] is not None
+
+
+@pytest.mark.anyio
+async def test_checkout_keeps_existing_newapi_token_active():
+    """
+    切换套餐不应同步废弃已有 New API token，否则管理接口异常时会导致模型不可用。
+    """
+    from app.database.session import AsyncSessionLocal
+
+    registered = client.post(
+        "/api/auth/register",
+        json={
+            "email": f"token-keep-{uuid.uuid4().hex}@volshape.local",
+            "password": "password123",
+            "username": "token keep",
+        },
+    )
+    assert registered.status_code == 200
+    payload = registered.json()
+    user_id = payload["user"]["id"]
+    headers = {"Authorization": f"Bearer {payload['access_token']}"}
+
+    token_id = str(uuid.uuid4())
+    async with AsyncSessionLocal() as session:
+        session.add(NewApiToken(
+            id=token_id,
+            user_id=user_id,
+            token_ciphertext=encrypt_secret("sk-test-existing-token"),
+            token_name="existing-token",
+            group_name="default",
+            model_limits=[],
+            quota_granted=50000,
+            quota_available_cache=50000,
+            status="active",
+        ))
+        await session.commit()
+
+    switched = client.post("/api/payment/checkout?plan_id=monthly_vip", headers=headers)
+    assert switched.status_code == 200
+
+    async with AsyncSessionLocal() as session:
+        token = await session.get(NewApiToken, token_id)
+        assert token is not None
+        assert token.status == "active"
+
+
+@pytest.mark.anyio
+async def test_trial_pro_can_only_be_claimed_once():
+    registered = client.post(
+        "/api/auth/register",
+        json={
+            "email": f"trial-{uuid.uuid4().hex}@volshape.local",
+            "password": "password123",
+            "username": "trial",
+        },
+    )
+    assert registered.status_code == 200
+    headers = {"Authorization": f"Bearer {registered.json()['access_token']}"}
+
+    first = client.post("/api/payment/checkout?plan_id=trial_pro", headers=headers)
+    assert first.status_code == 200
+    assert first.json()["tier"] == "pro"
+    assert first.json()["status"] == "trialing"
+    assert first.json()["current_period_end"] is not None
+
+    second = client.post("/api/payment/checkout?plan_id=trial_pro", headers=headers)
+    assert second.status_code == 409
+
+
+@pytest.mark.anyio
+async def test_expired_subscription_falls_back_to_free():
+    from app.database.models import Subscription
+    from app.database.session import AsyncSessionLocal
+    from app.services.newapi import get_user_tier
+
+    registered = client.post(
+        "/api/auth/register",
+        json={
+            "email": f"expired-sub-{uuid.uuid4().hex}@volshape.local",
+            "password": "password123",
+            "username": "expired-sub",
+        },
+    )
+    assert registered.status_code == 200
+    user_id = registered.json()["user"]["id"]
+
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Subscription).where(Subscription.user_id == user_id)
+        )
+        sub = result.scalars().first()
+        sub.tier = "pro"
+        sub.status = "active"
+        sub.current_period_end = datetime.datetime.utcnow() - datetime.timedelta(days=1)
+        await session.commit()
+
+        assert await get_user_tier(user_id, session) == "free"
+
+
+@pytest.mark.anyio
+async def test_reuses_rotated_newapi_token_in_development():
+    """
+    修复上一版订阅切换误把 token 标记为 rotated 后，本地开发环境可自动恢复。
+    """
+    from app.database.session import AsyncSessionLocal
+
+    registered = client.post(
+        "/api/auth/register",
+        json={
+            "email": f"token-reuse-{uuid.uuid4().hex}@volshape.local",
+            "password": "password123",
+            "username": "token reuse",
+        },
+    )
+    assert registered.status_code == 200
+    payload = registered.json()
+    user_id = payload["user"]["id"]
+    headers = {"Authorization": f"Bearer {payload['access_token']}"}
+    assert client.post("/api/payment/checkout?plan_id=monthly_vip", headers=headers).status_code == 200
+
+    token_id = str(uuid.uuid4())
+    async with AsyncSessionLocal() as session:
+        session.add(NewApiToken(
+            id=token_id,
+            user_id=user_id,
+            token_ciphertext=encrypt_secret("sk-test-rotated-token"),
+            token_name="rotated-token",
+            group_name="default",
+            model_limits=[],
+            quota_granted=50000,
+            quota_available_cache=50000,
+            status="rotated",
+        ))
+        await session.commit()
+
+        token = await NewApiService.ensure_user_token(user_id, session)
+        assert token.id == token_id
+        assert token.status == "active"
+        assert token.group_name == "default"
 
 
 @pytest.mark.anyio

@@ -45,3 +45,4 @@ skills-lock.json
 # Local runtime logs
 backend/*.log
 frontend/*.log
+/*.log

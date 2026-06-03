@@ -30,6 +30,7 @@ export function connectChatStream(
   body: ChatMessageRequest,
   handlers: SSEHandlers
 ): EventSource {
+  let errorDelivered = false;
   const eventSource = new EventSource(url, {
     method: 'POST',
     headers: {
@@ -43,14 +44,34 @@ export function connectChatStream(
     handlers.onOpen?.();
   };
 
-  const onErrorListener: EventSourceListener = (event: any) => {
+  const parseErrorPayload = (event: any) => {
     if (event?.data) {
       try {
-        handlers.onError?.(JSON.parse(event.data));
-        return;
+        return JSON.parse(event.data);
       } catch {}
     }
-    handlers.onError?.(event);
+    if (event?.message) {
+      try {
+        const parsedMessage = JSON.parse(event.message);
+        if (parsedMessage?.detail) {
+          return {
+            code: event.xhrStatus ? `http_${event.xhrStatus}` : 'sse_error',
+            message: parsedMessage.detail,
+            status: event.xhrStatus,
+          };
+        }
+      } catch {}
+    }
+    return event;
+  };
+
+  const onErrorListener: EventSourceListener = (event: any) => {
+    if (errorDelivered) {
+      return;
+    }
+    errorDelivered = true;
+    handlers.onError?.(parseErrorPayload(event));
+    eventSource.close();
   };
 
   const onStateListener: EventSourceListener = (event: any) => {

@@ -63,6 +63,11 @@ async def get_user_tier(user_id: str, db: AsyncSession) -> str:
     sub = result.scalars().first()
     if not sub or sub.status not in ("trialing", "active"):
         return "free"
+    if sub.current_period_end and sub.current_period_end < datetime.datetime.utcnow():
+        sub.status = "expired"
+        sub.updated_at = datetime.datetime.utcnow()
+        await db.commit()
+        return "free"
     return sub.tier or "free"
 
 
@@ -183,6 +188,13 @@ class NewApiService:
         if existing:
             return existing
 
+        reusable_result = await db.execute(
+            select(NewApiToken)
+            .where(NewApiToken.user_id == user_id, NewApiToken.status == "rotated")
+            .order_by(NewApiToken.created_at.desc())
+        )
+        reusable = reusable_result.scalars().first()
+
         policy = await get_policy_for_user(user_id, db)
         tier = await get_user_tier(user_id, db)
         provisioned = None
@@ -193,6 +205,15 @@ class NewApiService:
 
         if provisioned:
             api_key, newapi_token_id = provisioned
+        elif reusable and settings.ENV == "development":
+            reusable.status = "active"
+            reusable.group_name = group_for_tier(tier)
+            reusable.model_limits = policy.allowed_models or []
+            reusable.quota_granted = int(policy.monthly_quota_units)
+            reusable.quota_available_cache = max(int(reusable.quota_available_cache or 0), int(policy.monthly_quota_units))
+            reusable.updated_at = datetime.datetime.utcnow()
+            await db.commit()
+            return reusable
         elif settings.NEWAPI_SHARED_TOKEN and settings.ENV == "development":
             api_key, newapi_token_id = settings.NEWAPI_SHARED_TOKEN, None
         else:

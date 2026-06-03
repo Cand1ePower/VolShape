@@ -6,7 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database.models import LLMRequest, NewApiToken, UserUsageDaily
+from app.database.models import LLMRequest, NewApiToken, Subscription, UserUsageDaily
 from app.services.newapi import get_policy_for_user
 
 
@@ -112,8 +112,14 @@ class QuotaService:
         policy = await get_policy_for_user(user_id, db)
         usage = await _today_usage(user_id, db)
         month_used = await monthly_quota_used(user_id, db)
+        sub_result = await db.execute(select(Subscription).where(Subscription.user_id == user_id))
+        subscription = sub_result.scalars().first()
         return {
             "tier": policy.tier,
+            "subscription_status": subscription.status if subscription else "free",
+            "subscription_provider": subscription.provider if subscription else "manual",
+            "current_period_start": subscription.current_period_start.isoformat() if subscription and subscription.current_period_start else None,
+            "current_period_end": subscription.current_period_end.isoformat() if subscription and subscription.current_period_end else None,
             "daily_messages": int(policy.daily_messages),
             "daily_messages_used": int(usage.message_count),
             "daily_messages_remaining": max(0, int(policy.daily_messages) - int(usage.message_count)),

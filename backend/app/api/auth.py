@@ -52,6 +52,11 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+async def _with_quota(payload: dict, db: AsyncSession) -> dict:
+    payload["quota"] = await QuotaService.quota_status(payload["user"]["id"], db)
+    return payload
+
+
 @router.post("/register")
 async def register(request: RegisterRequest, http_request: Request, db: AsyncSession = Depends(get_db)):
     email = request.email.lower().strip()
@@ -70,7 +75,7 @@ async def register(request: RegisterRequest, http_request: Request, db: AsyncSes
     )
     db.add(user)
     await db.flush()
-    return await issue_session(user, db, http_request)
+    return await _with_quota(await issue_session(user, db, http_request), db)
 
 
 @router.post("/login")
@@ -82,7 +87,7 @@ async def login(request: LoginRequest, http_request: Request, db: AsyncSession =
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="邮箱或密码错误")
     if user.status != "active":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="账号已被禁用")
-    return await issue_session(user, db, http_request)
+    return await _with_quota(await issue_session(user, db, http_request), db)
 
 
 @router.post("/refresh")
@@ -95,12 +100,13 @@ async def refresh(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
     user = await db.get(AppUser, session.user_id)
     if not user or user.status != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不存在或已被禁用")
-    return {
+    payload = {
         "access_token": create_access_token(user.id, user.role),
         "token_type": "bearer",
         "expires_in": 15 * 60,
         "user": {"id": user.id, "email": user.email, "username": user.username, "role": user.role, "status": user.status},
     }
+    return await _with_quota(payload, db)
 
 
 @router.post("/logout")

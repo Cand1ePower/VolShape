@@ -53,7 +53,7 @@ export default function ChatScreen() {
   const dynamicFontSize = isSmallScreen ? 14 : 15;
 
   // Auth
-  const { token, userId, sessionId, isLoggedIn } = useAuth();
+  const { sessionId, isLoggedIn, getValidToken } = useAuth();
   const { resetPlan, syncWorkoutOnLogin } = usePlan();
 
   // Clear training plan and chat messages on logout
@@ -323,9 +323,22 @@ export default function ChatScreen() {
     (async () => {
       try {
         const baseUrl = getBackendBaseUrl();
-        const resp = await fetch(`${baseUrl}/api/chat/history?session_id=${sessionId}`, {
-          headers: { Authorization: `Bearer ${token}` },
+        const validToken = await getValidToken();
+        if (!validToken) {
+          console.warn('[History] No valid token, showing welcome');
+          setMessages([{
+            id: 'welcome', text: '你好！我是 VolShape AI 教练。请先登录后再使用。',
+            isBot: true, createdAt: new Date(),
+          }]);
+          return;
+        }
+        const resp = await fetch(`${baseUrl}/api/chat/history?session_id=${encodeURIComponent(sessionId)}`, {
+          headers: { Authorization: `Bearer ${validToken}` },
         });
+        if (!resp.ok) {
+          console.warn(`[History] HTTP ${resp.status}`);
+          throw new Error(`HTTP ${resp.status}`);
+        }
         const data = await resp.json();
         if (data.messages && data.messages.length > 0) {
           setMessages(data.messages.map((m: any, i: number) => ({
@@ -341,7 +354,8 @@ export default function ChatScreen() {
             isBot: true, createdAt: new Date(),
           }]);
         }
-      } catch {
+      } catch (e) {
+        console.error('[History] Load failed:', e);
         setMessages([{
           id: 'welcome', text: '你好！我是 VolShape AI 教练。后端未连接，请先启动服务。',
           isBot: true, createdAt: new Date(),
@@ -351,7 +365,7 @@ export default function ChatScreen() {
   }, [isLoggedIn, sessionId]);
 
   // 发送消息与流式处理逻辑
-  const handleSend = useCallback(() => {
+  const handleSend = useCallback(async () => {
     if (isGenerating || !inputText.trim()) return;
 
     const userText = inputText.trim();
@@ -387,12 +401,23 @@ export default function ChatScreen() {
 
     // 3. 建立 SSE 连接
     const url = getBackendUrl();
-    if (!token) return;
-    // Use auth context token
-
+    const validToken = await getValidToken();
+    if (!validToken) {
+      setIsGenerating(false);
+      setAgentStatus(null);
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === botMessageId
+            ? { ...msg, text: '请先登录后再使用 AI 教练。' }
+            : msg
+        )
+      );
+      return;
+    }
+    esRef.current?.close?.();
     esRef.current = connectChatStream(
       url,
-      token,
+      validToken,
       {
         user_input: userText,
         session_id: sessionId || 'default',
@@ -438,7 +463,7 @@ export default function ChatScreen() {
         onError: (err) => {
           setIsGenerating(false);
           setAgentStatus(null);
-          console.error('SSE Error:', err);
+          esRef.current?.close?.();
           const message = err?.message || '系统处理本次消息时出现异常，本次结果已停止生成。';
           const suffix = err?.code ? `\n\n错误码：${err.code}` : '';
           setMessages((prev) =>
@@ -452,7 +477,7 @@ export default function ChatScreen() {
         },
       }
     );
-  }, [inputText, isGenerating, token, mode, sessionId, useTrainingSheet, formatProcessingMessage]);
+  }, [inputText, isGenerating, getValidToken, mode, sessionId, useTrainingSheet, formatProcessingMessage]);
 
   // 主题配色
   const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
@@ -552,6 +577,7 @@ export default function ChatScreen() {
                 >
                   {msg.text ? (
                     <Text
+                      selectable
                       style={[
                         styles.messageText,
                         {

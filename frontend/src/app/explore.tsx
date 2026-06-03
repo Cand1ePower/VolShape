@@ -4,7 +4,6 @@ import {
   TouchableOpacity, useWindowDimensions, Modal, ActivityIndicator, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import * as WebBrowser from 'expo-web-browser';
 import { useAuth } from '@/contexts/AuthContext';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { getBackendBaseUrl } from '@/services/api';
@@ -12,12 +11,23 @@ import { getBackendBaseUrl } from '@/services/api';
 const PLAN_CATALOG = [
   {
     id: 'free',
+    tier: 'free',
     title: 'Free',
     price: '¥0',
     subtitle: '日常记录和轻量问答',
     dailyMessages: 10,
     monthlyQuota: '5 万',
     features: ['快速模式', '训练表生成'],
+  },
+  {
+    id: 'trial_pro',
+    tier: 'pro',
+    title: 'Pro Trial',
+    price: '7 天免费',
+    subtitle: '每个账号限领一次',
+    dailyMessages: 100,
+    monthlyQuota: '试用额度',
+    features: ['专家模式', '训练表生成', '完整记忆读取'],
   },
   {
     id: 'monthly_vip',
@@ -52,7 +62,7 @@ export default function ExploreScreen() {
   const isDark = scheme === 'dark';
   const safeAreaInsets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const { token, userId, user, quota, isLoggedIn, login, register, logout, refreshMe } = useAuth();
+  const { userId, user, quota, isLoggedIn, login, register, logout, refreshMe, getValidToken } = useAuth();
 
   const insets = { ...safeAreaInsets, bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three };
   const isSmallScreen = width < 375;
@@ -98,7 +108,8 @@ export default function ExploreScreen() {
   };
 
   const startCheckout = async (planId: string) => {
-    if (!isLoggedIn || !token) {
+    const validToken = await getValidToken();
+    if (!isLoggedIn || !validToken) {
       setPlansVisible(false);
       setLoginModalVisible(true);
       return;
@@ -109,16 +120,14 @@ export default function ExploreScreen() {
       const baseUrl = getBackendBaseUrl();
       const resp = await fetch(`${baseUrl}/api/payment/checkout?plan_id=${encodeURIComponent(planId)}`, {
         method: 'POST',
-        headers: { Authorization: `Bearer ${token}`, Connection: 'close' },
+        headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' },
       });
       const data = await resp.json();
-      if (!resp.ok) throw new Error(data.detail || data.message || '无法创建订阅订单');
-      if (data.checkout_url) {
-        await WebBrowser.openBrowserAsync(data.checkout_url);
-      }
+      if (!resp.ok) throw new Error(data.detail || data.message || '无法切换套餐');
       await refreshMe();
+      setPlansVisible(false);
     } catch (e: any) {
-      setCheckoutError(e?.message || '订阅入口暂时不可用');
+      setCheckoutError(e?.message || '套餐切换暂时不可用');
     } finally {
       setCheckoutLoading(null);
     }
@@ -129,11 +138,13 @@ export default function ExploreScreen() {
     setMemoryModalVisible(true);
     try {
       const baseUrl = getBackendBaseUrl();
-      const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
+      const validToken = await getValidToken();
+      if (!validToken) throw new Error('auth required');
+      const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
       const data = await response.json();
       setMemoryData(data);
       
-      const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
+      const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
       const mem0Json = await mem0Resp.json();
       setMem0Data(mem0Json.memories || []);
     } catch (err) {
@@ -164,15 +175,17 @@ export default function ExploreScreen() {
 
   // Automatically fetch metrics and profile in background when logged in
   useEffect(() => {
-    if (isLoggedIn && token) {
+    if (isLoggedIn) {
       (async () => {
         try {
           const baseUrl = getBackendBaseUrl();
-          const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
+          const validToken = await getValidToken();
+          if (!validToken) throw new Error('auth required');
+          const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
           const data = await response.json();
           setMemoryData(data);
           
-          const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${token}`, Connection: 'close' } });
+          const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
           const mem0Json = await mem0Resp.json();
           setMem0Data(mem0Json.memories || []);
         } catch (err) {
@@ -182,7 +195,7 @@ export default function ExploreScreen() {
     } else {
       setMemoryData(null);
     }
-  }, [isLoggedIn, token]);
+  }, [isLoggedIn, getValidToken]);
 
   return (
     <ScrollView style={{ backgroundColor: bgCol }} contentInset={insets} contentContainerStyle={[styles.scrollContent, {
@@ -378,8 +391,7 @@ export default function ExploreScreen() {
             </View>
             <ScrollView contentContainerStyle={styles.planList}>
               {PLAN_CATALOG.map((plan) => {
-                const isCurrent = isLoggedIn && tierLabel(quota?.tier) === plan.title;
-                const isFree = plan.id === 'free';
+                const isCurrent = isLoggedIn && (plan.tier || 'free') === (quota?.tier || 'free');
                 return (
                   <View key={plan.id} style={[styles.planCard, { borderColor: isCurrent ? '#007AFF' : borderCol, backgroundColor: isDark ? '#0A0A0C' : '#F8F8FA' }]}>
                     <View style={styles.planTopRow}>
@@ -402,20 +414,20 @@ export default function ExploreScreen() {
                     </View>
                     <TouchableOpacity
                       activeOpacity={0.75}
-                      disabled={isCurrent || isFree || checkoutLoading === plan.id}
+                      disabled={isCurrent || checkoutLoading === plan.id}
                       style={[
                         styles.planAction,
                         {
-                          backgroundColor: isCurrent ? 'rgba(52,199,89,0.12)' : isFree ? 'rgba(142,142,147,0.16)' : '#007AFF',
+                          backgroundColor: isCurrent ? 'rgba(52,199,89,0.12)' : '#007AFF',
                         },
                       ]}
                       onPress={() => startCheckout(plan.id)}
                     >
                       <Text style={[
                         styles.planActionText,
-                        { color: isCurrent ? '#34C759' : isFree ? subTextCol : '#FFFFFF' },
+                        { color: isCurrent ? '#34C759' : '#FFFFFF' },
                       ]}>
-                        {isCurrent ? '当前套餐' : isFree ? '基础方案' : checkoutLoading === plan.id ? '正在创建订单...' : '订阅'}
+                        {isCurrent ? '当前套餐' : checkoutLoading === plan.id ? '正在切换...' : '切换套餐'}
                       </Text>
                     </TouchableOpacity>
                   </View>

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { Platform } from 'react-native';
 import { apiFetch } from '@/services/api';
 
@@ -27,6 +27,7 @@ interface AuthContextType extends AuthState {
   logout: () => Promise<void>;
   switchUser: (email: string, password: string) => Promise<void>;
   refreshMe: () => Promise<void>;
+  getValidToken: () => Promise<string | null>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -43,6 +44,7 @@ const AuthContext = createContext<AuthContextType>({
   logout: async () => {},
   switchUser: async () => {},
   refreshMe: async () => {},
+  getValidToken: async () => null,
 });
 
 export function useAuth() {
@@ -105,6 +107,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     isLoggedIn: false,
     isLoading: true,
   });
+  const stateRef = useRef(state);
+
+  useEffect(() => {
+    stateRef.current = state;
+  }, [state]);
 
   const persistAuth = useCallback(async (accessToken: string, refreshToken: string, userId: string) => {
     const storage = await getStorage();
@@ -120,10 +127,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await storage.removeItem(SESSION_KEY);
   }, []);
 
+  const getValidToken = useCallback(async () => {
+    const current = stateRef.current;
+    if (!current.refreshToken) {
+      return current.token;
+    }
+
+    try {
+      const refreshResp = await apiFetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Connection: 'close' },
+        body: JSON.stringify({ refresh_token: current.refreshToken }),
+      });
+      if (!refreshResp.ok) throw new Error('refresh failed');
+      const refreshed = await refreshResp.json();
+      await persistAuth(refreshed.access_token, current.refreshToken, refreshed.user.id);
+      setState(prev => ({
+        ...prev,
+        token: refreshed.access_token,
+        refreshToken: current.refreshToken,
+        userId: refreshed.user?.id || prev.userId,
+        user: refreshed.user || prev.user,
+        sessionId: refreshed.user?.id || prev.sessionId,
+        isLoggedIn: true,
+        isLoading: false,
+      }));
+      return refreshed.access_token as string;
+    } catch {
+      await clearAuth();
+      setState({
+        token: null,
+        refreshToken: null,
+        userId: null,
+        user: null,
+        sessionId: null,
+        quota: null,
+        isLoggedIn: false,
+        isLoading: false,
+      });
+      return null;
+    }
+  }, [clearAuth, persistAuth]);
+
   const refreshMe = useCallback(async () => {
-    if (!state.token) return;
+    const validToken = await getValidToken();
+    if (!validToken) return;
     const resp = await apiFetch('/api/auth/me', {
-      headers: { Authorization: `Bearer ${state.token}`, Connection: 'close' },
+      headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' },
     });
     if (!resp.ok) throw new Error('登录已过期');
     const data = await resp.json();
@@ -136,7 +186,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       isLoggedIn: true,
       isLoading: false,
     }));
-  }, [state.token]);
+  }, [getValidToken]);
 
   useEffect(() => {
     (async () => {
@@ -232,7 +282,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [login]);
 
   return (
-    <AuthContext.Provider value={{ ...state, login, register, logout, switchUser, refreshMe }}>
+    <AuthContext.Provider value={{ ...state, login, register, logout, switchUser, refreshMe, getValidToken }}>
       {children}
     </AuthContext.Provider>
   );

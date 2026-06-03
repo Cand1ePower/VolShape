@@ -2,6 +2,15 @@
 Unified LLM Client for VolShape.
 Uses langfuse.openai.AsyncOpenAI when Langfuse is configured for auto-tracing.
 Falls back to vanilla openai.AsyncOpenAI otherwise.
+
+Langfuse 嵌套追踪说明
+----------------------
+当调用时传入 `langfuse_parent` (一个 NodeSpan._span 或 trace 对象)，
+本模块会将 LLM Generation span 嵌套在该 parent 之下，实现：
+
+  Trace → NodeSpan(intent_classifier) → Generation(LLM call)
+
+如果不传入 langfuse_parent，行为和之前完全一致（独立顶级 Generation）。
 """
 import json
 import os
@@ -14,6 +23,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 _AsyncOpenAI = None
 _clients: Dict[str, Any] = {}
+
+RESPONSE_STYLE_GUIDANCE = """
+
+[VolShape response style]
+- Use a professional fitness-coach tone. Do not use casual buddy terms such as "兄弟", "哥们", "老铁".
+- Be specific, evidence-based, and calm. Prefer actionable coaching over hype.
+- For user-facing final answers, provide enough detail to be useful: usually 250-450 Chinese characters unless the user asks for brevity.
+- When training history is available, explicitly mention completed sets versus planned sets if relevant.
+"""
 
 
 def _get_async_openai_class():
@@ -63,7 +81,9 @@ async def llm_call(
     user_id: Optional[str] = None,
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
+    langfuse_parent: Optional[Any] = None,  # NodeSpan._span 或 trace 对象
 ) -> str:
+    system_prompt = f"{system_prompt}{RESPONSE_STYLE_GUIDANCE}"
     base_url = settings.DEEPSEEK_BASE_URL
     api_key = settings.DEEPSEEK_API_KEY
     newapi_token = None
@@ -89,10 +109,18 @@ async def llm_call(
     if response_format:
         kwargs["response_format"] = response_format
 
-    # langfuse.openai.AsyncOpenAI reads LANGFUSE_* env vars automatically
-    # We just need to set langfuse_observation_id in extra_headers if needed
-    # For auto-tracing, nothing extra is needed — it just works.
+    # ── Langfuse 嵌套 span 支持 ──────────────────────────────────────
+    # 当 langfuse_parent 存在时，通过 extra_body 传入 parent span 的 observation_id，
+    # 让本次 LLM Generation 嵌套在调用方的节点 span 下。
+    # langfuse.openai SDK 会读取 langfuse_parent 字段并自动建立嵌套关系。
+    if langfuse_parent is not None:
+        try:
+            kwargs["langfuse_parent"] = langfuse_parent
+        except Exception:
+            pass  # 不因追踪失败而影响主流程
+    # ────────────────────────────────────────────────────────────────
 
+    kwargs.pop("langfuse_parent", None)
     start = time.perf_counter()
     try:
         response = await client.chat.completions.create(**kwargs)
@@ -148,6 +176,7 @@ async def llm_call_structured(
     user_id: Optional[str] = None,
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
+    langfuse_parent: Optional[Any] = None,  # 透传给 llm_call
 ) -> Dict[str, Any]:
     text = await llm_call(
         system_prompt=system_prompt,
@@ -160,6 +189,7 @@ async def llm_call_structured(
         user_id=user_id,
         db=db,
         session_id=session_id,
+        langfuse_parent=langfuse_parent,
     )
     try:
         return json.loads(text)

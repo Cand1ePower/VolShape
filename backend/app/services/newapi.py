@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.database.models import NewApiToken, Subscription, UserQuotaPolicy
 from app.services.crypto import decrypt_secret, encrypt_secret
+from app.services.errors import NewApiProvisionError
 
 
 DEFAULT_POLICIES = {
@@ -195,7 +196,10 @@ class NewApiService:
         elif settings.NEWAPI_SHARED_TOKEN and settings.ENV == "development":
             api_key, newapi_token_id = settings.NEWAPI_SHARED_TOKEN, None
         else:
-            raise RuntimeError("New API 用户令牌创建失败，且未配置可用于开发的 NEWAPI_SHARED_TOKEN。")
+            raise NewApiProvisionError(
+                "New API 用户令牌创建失败，且未配置可用于开发的 NEWAPI_SHARED_TOKEN。",
+                details={"tier": tier, "group": group_for_tier(tier)},
+            )
 
         token = NewApiToken(
             id=str(uuid.uuid4()),

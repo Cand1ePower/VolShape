@@ -43,7 +43,13 @@ export function connectChatStream(
     handlers.onOpen?.();
   };
 
-  const onErrorListener: EventSourceListener = (event) => {
+  const onErrorListener: EventSourceListener = (event: any) => {
+    if (event?.data) {
+      try {
+        handlers.onError?.(JSON.parse(event.data));
+        return;
+      } catch {}
+    }
     handlers.onError?.(event);
   };
 

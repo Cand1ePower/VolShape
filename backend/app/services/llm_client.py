@@ -6,8 +6,10 @@ Falls back to vanilla openai.AsyncOpenAI otherwise.
 import json
 import os
 import time
+from json import JSONDecodeError
 from typing import Any, Dict, List, Optional
 from app.core.config import settings
+from app.services.errors import AppError, LLMEmptyResponseError, LLMGatewayError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 _AsyncOpenAI = None
@@ -99,6 +101,9 @@ async def llm_call(
         prompt_tokens = int(getattr(usage, "prompt_tokens", 0) or 0)
         completion_tokens = int(getattr(usage, "completion_tokens", 0) or 0)
         request_id = getattr(response, "id", None)
+        content = response.choices[0].message.content
+        if not content or not content.strip():
+            raise LLMEmptyResponseError()
         if user_id and db:
             from app.services.quota import QuotaService
 
@@ -114,7 +119,7 @@ async def llm_call(
                 latency_ms=latency_ms,
                 request_id=request_id,
             )
-        return response.choices[0].message.content.strip()
+        return content.strip()
     except Exception as e:
         if user_id and db:
             from app.services.quota import QuotaService
@@ -129,7 +134,9 @@ async def llm_call(
                 error_code=e.__class__.__name__,
                 latency_ms=int((time.perf_counter() - start) * 1000),
             )
-        raise
+        if isinstance(e, AppError):
+            raise
+        raise LLMGatewayError(str(e), details={"error_type": e.__class__.__name__}) from e
 
 
 async def llm_call_structured(
@@ -154,4 +161,10 @@ async def llm_call_structured(
         db=db,
         session_id=session_id,
     )
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except JSONDecodeError as e:
+        raise LLMGatewayError(
+            "LLM structured response was not valid JSON",
+            details={"error_type": e.__class__.__name__},
+        ) from e

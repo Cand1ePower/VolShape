@@ -10,6 +10,7 @@ from app.core.config import settings
 from app.database.session import get_db
 from app.database.models import ConversationMessage
 from app.graphs.workflow import app_workflow
+from app.services.errors import error_payload
 from app.services.quota import QuotaService
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, delete
@@ -174,6 +175,13 @@ async def live_agent_stream(user_input: str, user_id: str, mode: str, session_id
             except Exception:
                 pass
 
+        yield {"event": "done", "data": ""}
+
+    except Exception as e:
+        payload = error_payload(e)
+        error_text = f"⚠️ {payload['message']}"
+        await _save_message(user_id, session_id, "assistant", error_text, db)
+        yield {"event": "error", "data": json.dumps(payload, ensure_ascii=False)}
         yield {"event": "done", "data": ""}
 
     finally:

@@ -8,6 +8,7 @@ from app.graphs.state import AgentState
 from app.graphs.acwr import calculate_acwr
 from app.services.memory import MemoryService
 from app.services.llm_client import llm_call_structured
+from app.services.errors import LLMGatewayError
 from app.services.tavily_search import search_exercise_info
 from app.database.models import UserMetrics
 from app.core.config import settings
@@ -123,8 +124,10 @@ async def _safe_llm_structured(system_prompt: str, user_prompt: str, temperature
             user_id=user_id, db=db, session_id=session_id,
         )
     except Exception as e:
-        print(f"[LLM Fallback] {e}")
-        return fallback
+        print(f"[LLM Error] {e}")
+        if isinstance(e, LLMGatewayError):
+            raise
+        raise LLMGatewayError(str(e), details={"error_type": e.__class__.__name__}) from e
 
 
 # ═══════════════════════════════════════════════════════════════

@@ -439,10 +439,12 @@ export default function ChatScreen() {
           setIsGenerating(false);
           setAgentStatus(null);
           console.error('SSE Error:', err);
+          const message = err?.message || '系统处理本次消息时出现异常，本次结果已停止生成。';
+          const suffix = err?.code ? `\n\n错误码：${err.code}` : '';
           setMessages((prev) =>
             prev.map((msg) =>
               msg.id === botMessageId
-                ? { ...msg, text: '⚠️ 智能体图执行异常。这可能是因为网络连接问题，或没有执行 PostgreSQL Fallback 降级。请确保后端已经正常启动！' }
+                ? { ...msg, text: `⚠️ ${message}${suffix}` }
                 : msg
             )
           );

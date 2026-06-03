@@ -10,9 +10,13 @@ def _make_state(user_id: str, user_input: str) -> dict:
         "user_input": user_input,
         "user_id": user_id,
         "session_id": "test_session",
+        "mode": "quick",
+        "use_training_sheet": True,
         "intent": "",
         "user_profile": {},
+        "mem0_context": "",
         "recent_events": [],
+        "conversation_history": [],
         "plan_steps": [],
         "execution_results": {},
         "tavily_results": [],
@@ -25,10 +29,42 @@ def _make_state(user_id: str, user_input: str) -> dict:
     }
 
 
+async def _fake_llm_call_structured(system_prompt, user_prompt, **kwargs):
+    if "用户输入" in user_prompt:
+        return {"intent": "training_plan"}
+    if "训练策略" in user_prompt and "PR记录" in user_prompt:
+        return {
+            "exercises": [
+                {"name": "哑铃卧推", "sets": 3, "reps": "10", "weight": "适中", "notes": "控制节奏"},
+                {"name": "坐姿推肩", "sets": 3, "reps": "10", "weight": "轻中等", "notes": "避免耸肩"},
+            ],
+            "duration_minutes": 35,
+            "estimated_rpe": 6,
+            "safety_score": 90,
+            "final_response": "已生成训练计划。",
+            "disclaimer": "如有疼痛请立即停止。",
+        }
+    if "评估反馈" in user_prompt:
+        return {
+            "correction_summary": "转为肩部友好的主动恢复训练",
+            "specific_actions": [],
+            "safety_override": True,
+        }
+    if "训练计划" in user_prompt or "ACWR" in user_prompt:
+        return {"score": 90, "feedback": "自动审查通过", "risk": "low"}
+    return {"plan_steps": ["热身", "主训练", "整理放松"]}
+
+
+async def _noop_memory_extraction(*args, **kwargs):
+    return []
+
+
 @pytest.mark.anyio
-async def test_workflow_runs_without_crash(anyio_backend):
+async def test_workflow_runs_without_crash(monkeypatch, anyio_backend):
     """Verify the LangGraph compiles and runs end-to-end without crashing."""
     from app.database.session import AsyncSessionLocal
+    monkeypatch.setattr("app.graphs.workflow.llm_call_structured", _fake_llm_call_structured)
+    monkeypatch.setattr(MemoryService, "extract_and_sync_memory", _noop_memory_extraction)
 
     async with AsyncSessionLocal() as session:
         user_id = "test-user-candlepw"
@@ -63,9 +99,11 @@ async def test_workflow_runs_without_crash(anyio_backend):
 
 
 @pytest.mark.anyio
-async def test_workflow_with_injury_profile(anyio_backend):
+async def test_workflow_with_injury_profile(monkeypatch, anyio_backend):
     """Verify workflow respects injury profile and ACWR safety loop."""
     from app.database.session import AsyncSessionLocal
+    monkeypatch.setattr("app.graphs.workflow.llm_call_structured", _fake_llm_call_structured)
+    monkeypatch.setattr(MemoryService, "extract_and_sync_memory", _noop_memory_extraction)
 
     async with AsyncSessionLocal() as session:
         user_id = "test-user-candlepw"
@@ -92,6 +130,8 @@ async def test_workflow_with_injury_profile(anyio_backend):
 
         config = {"configurable": {"db": session}}
         state = _make_state(user_id, "我想练胸，肩膀不舒服但也得冲大重量杠铃卧推")
+        state["mode"] = "detailed"
+        state["use_training_sheet"] = False
 
         result = await app_workflow.ainvoke(state, config=config)
 

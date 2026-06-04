@@ -56,24 +56,148 @@ def _format_profile_for_prompt(profile: dict, mem0_context: str = "") -> str:
         diet_count = sum(1 for e in recent if e.get("type") == "diet")
         if diet_count:
             parts.append(f"近期饮食记录: {diet_count} 条")
-            
-    # 🌟 主动拉取该用户近5天训练计划物理数据库并注入大模型上下文
+
+    return "; ".join(parts) if parts else "新用户，无历史数据"
+
+
+def _actual_sets_by_exercise(plan_json: dict, completion_data: dict) -> Dict[int, int]:
+    completed_map: Dict[int, int] = {}
+    if not isinstance(completion_data, dict):
+        return completed_map
+
+    completed_keys = completion_data.get("completed_keys")
+    if isinstance(completed_keys, list):
+        for key in completed_keys:
+            try:
+                exercise_idx = int(str(key).split("-", 1)[0])
+            except (TypeError, ValueError):
+                continue
+            completed_map[exercise_idx] = completed_map.get(exercise_idx, 0) + 1
+        return completed_map
+
+    for raw_idx, value in completion_data.items():
+        if not isinstance(value, dict):
+            continue
+        try:
+            exercise_idx = int(str(raw_idx))
+        except ValueError:
+            continue
+        completed_map[exercise_idx] = sum(1 for done in value.values() if done)
+    return completed_map
+
+
+def _format_recent_training_context(profile: dict, recent_events: List[Dict[str, Any]]) -> str:
+    sections: List[str] = []
+
     recent_plans = profile.get("recent_plans", [])
     if recent_plans:
         plan_summaries = []
         for p in recent_plans:
-            plan_json = p.get("plan_json", {})
+            plan_json = p.get("plan_json", {}) or {}
+            completion_data = p.get("completion_data", {}) or {}
             title = plan_json.get("title", "今日训练")
-            status_label = "【已完成】" if p.get("status") == "completed" else "【未完成(应用进行中)】"
+            status_value = p.get("status")
+            status_label = "【已完成】" if status_value == "completed" else "【未完成】"
             exercises = plan_json.get("exercises", [])
-            ex_details = [f"{e.get('name')}({e.get('sets')}组)" for e in exercises if e.get("name")]
-            plan_summaries.append(f"- 日期: {p.get('target_date')} | 计划: {title} | 状态: {status_label} | 包含动作: {', '.join(ex_details)}")
-        parts.append("\n[用户近5天在独立数据库中应用并使用的训练计划数据(专表专用)]:\n" + "\n".join(plan_summaries) + "\n[近5天计划背景结束]\n")
+            actual_sets_map = _actual_sets_by_exercise(plan_json, completion_data)
+            ex_details = []
+            for idx, exercise in enumerate(exercises):
+                name = exercise.get("name")
+                if not name:
+                    continue
+                planned_sets = int(exercise.get("sets") or 0)
+                actual_sets = actual_sets_map.get(idx)
+                if actual_sets is None and status_value == "completed":
+                    actual_sets = 0
+                if actual_sets is None:
+                    ex_details.append(f"{name}(计划{planned_sets}组)")
+                else:
+                    ex_details.append(f"{name}(计划{planned_sets}组/实际{actual_sets}组)")
+
+            completion_summary = ""
+            if status_value == "completed":
+                total_sets = int(completion_data.get("total_sets") or sum(int(e.get("sets") or 0) for e in exercises if isinstance(e, dict)))
+                completed_sets = int(completion_data.get("completed_sets") or sum(actual_sets_map.values()))
+                completion_summary = f" | 总完成: {completed_sets}/{total_sets}组"
+
+            plan_summaries.append(
+                f"- 日期: {p.get('target_date')} | 计划: {title} | 状态: {status_label}{completion_summary} | 动作: {', '.join(ex_details)}"
+            )
+        sections.append("[近期训练计划与实际完成]\n" + "\n".join(plan_summaries) + "\n[近期训练计划结束]")
+
+    training_events = []
+    for event in recent_events:
+        payload = event.get("payload") or {}
+        if event.get("type") == "training" and payload.get("total_sets"):
+            training_events.append(
+                f"- {event.get('date')}: 实际完成 {payload.get('completed_sets', 0)}/{payload.get('total_sets')} 组, 完成率 {payload.get('completion_rate', 0)}"
+            )
+    if training_events:
+        sections.append("[近期训练打卡事件]\n" + "\n".join(training_events[-5:]) + "\n[近期训练打卡结束]")
+
+    return "\n".join(sections)
+
+
+def _format_current_datetime_context() -> str:
+    now = datetime.datetime.now()
+    today = now.date()
+    yesterday = today - datetime.timedelta(days=1)
+    return (
+        "[真实当前日期时间]\n"
+        f"- 当前本地时间: {now.strftime('%Y-%m-%d %H:%M:%S')}\n"
+        f"- 今天: {today.isoformat()}\n"
+        f"- 昨天: {yesterday.isoformat()}\n"
+        "[真实当前日期时间结束]"
+    )
+
+
+def _normalize_exercises(raw_exercises: Any) -> List[Dict[str, Any]]:
+    if not isinstance(raw_exercises, list):
+        return []
+    normalized = []
+    for item in raw_exercises:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        if not name:
+            continue
+        normalized.append(item)
+    return normalized
+
+
+def _build_prompt_context(
+    *,
+    agent_instruction: str,
+    user_profile: dict,
+    mem0_context: str,
+    recent_events: List[Dict[str, Any]],
+    user_input: str,
+    history_text: str = "",
+    current_plan_text: str = "",
+) -> str:
+    sections = [f"[Agent任务]\n{agent_instruction}\n[Agent任务结束]"]
+
+    profile_summary = _format_profile_for_prompt(user_profile)
+    if profile_summary:
+        sections.append(f"[用户多层记忆]\n{profile_summary}\n[用户多层记忆结束]")
 
     if mem0_context:
-        parts.append("\n[Mem0 高级记忆系统提取的用户特征与上下文]:\n" + mem0_context + "\n[Mem0记忆结束]\n")
+        sections.append(f"[Mem0提取的上下文记忆]\n{mem0_context}\n[Mem0提取的上下文记忆结束]")
 
-    return "; ".join(parts) if parts else "新用户，无历史数据"
+    recent_training = _format_recent_training_context(user_profile, recent_events)
+    if recent_training:
+        sections.append(recent_training)
+
+    if history_text:
+        sections.append(history_text.strip())
+
+    sections.append(_format_current_datetime_context())
+
+    if current_plan_text:
+        sections.append(f"[当前提取/生成的训练计划]\n{current_plan_text}\n[当前提取/生成的训练计划结束]")
+
+    sections.append(f"[用户这次的真实输入]\n{user_input}\n[用户这次的真实输入结束]")
+    return "\n\n".join(section for section in sections if section)
 
 
 async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession) -> str:
@@ -215,23 +339,12 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
                 "id": p.id,
                 "target_date": str(p.target_date),
                 "status": p.status,
-                "plan_json": p.plan_json
+                "plan_json": p.plan_json,
+                "completion_data": p.completion_data or {},
             }
             for p in plan_result.scalars().all()
         ]
         profile["recent_plans"] = recent_plans
-        training_summaries = []
-        for event in recent:
-            payload = event.get("payload") or {}
-            if event.get("type") == "training" and payload.get("total_sets"):
-                training_summaries.append(
-                    f"{event.get('date')}: completed {payload.get('completed_sets', 0)}/"
-                    f"{payload.get('total_sets')} sets, completion_rate={payload.get('completion_rate', 0)}"
-                )
-        training_context = ""
-        if training_summaries:
-            training_context = "\n[Recent training completion]\n" + "\n".join(training_summaries[-5:]) + "\n"
-
         span.set_output({
             "has_profile": bool(profile.get("goal")),
             "recent_events_count": len(recent),
@@ -244,7 +357,7 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
             },
         })
 
-    return {"user_profile": profile, "recent_events": recent, "mem0_context": (state.get("mem0_context", "") + training_context)}
+    return {"user_profile": profile, "recent_events": recent, "mem0_context": state.get("mem0_context", "")}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -256,9 +369,9 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
     mem0_context = state.get("mem0_context", "")
-    profile_summary = _format_profile_for_prompt(user_profile, mem0_context)
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
+    recent_events = state.get("recent_events", [])
     trace = get_trace_from_config(config)
 
     with NodeSpan(
@@ -273,7 +386,14 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     ) as span:
         result = await _safe_llm_structured(
             system_prompt=PLANNER_SYSTEM,
-            user_prompt=f"用户画像: {profile_summary}\n{history_text}\n用户需求: {user_input}",
+            user_prompt=_build_prompt_context(
+                agent_instruction="请先判断用户当前需求，再基于长期记忆、近期训练和当前时间制定本次训练策略框架。",
+                user_profile=user_profile,
+                mem0_context=mem0_context,
+                recent_events=recent_events,
+                history_text=history_text,
+                user_input=user_input,
+            ),
             temperature=0.4,
             fallback={"plan_steps": [
                 "Step 1: 全身关节热身与动态拉伸 (5-10分钟)",
@@ -302,9 +422,9 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     plan_steps = state.get("plan_steps", [])
     user_input = state.get("user_input", "")
     mem0_context = state.get("mem0_context", "")
-    profile_summary = _format_profile_for_prompt(user_profile, mem0_context)
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
+    recent_events = state.get("recent_events", [])
     trace = get_trace_from_config(config)
 
     pr_weights = {}
@@ -328,7 +448,15 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     ) as span:
         result = await _safe_llm_structured(
             system_prompt=QUICK_COMBINED_SYSTEM,
-            user_prompt=f"用户画像: {profile_summary}\nPR记录: {pr_text}\n{history_text}\n训练策略: {json.dumps(plan_steps, ensure_ascii=False)}\n用户需求: {user_input}",
+            user_prompt=_build_prompt_context(
+                agent_instruction=f"请在快速模式下一次性完成训练计划生成、动作细化、安全审查与最终回复。PR记录: {pr_text}",
+                user_profile=user_profile,
+                mem0_context=mem0_context,
+                recent_events=recent_events,
+                history_text=history_text,
+                current_plan_text=json.dumps(plan_steps, ensure_ascii=False),
+                user_input=user_input,
+            ),
             temperature=0.5,
             max_tokens=2048,
             fallback={
@@ -389,9 +517,9 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     plan_steps = state.get("plan_steps", [])
     error_count = state.get("error_count", 0)
     corrector_feedback = state.get("corrector_feedback", "")
-    profile_summary = _format_profile_for_prompt(user_profile)
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
+    recent_events = state.get("recent_events", [])
     trace = get_trace_from_config(config)
 
     pr_weights = {}
@@ -404,7 +532,15 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     pr_text = ", ".join(f"{k}: {v}kg" for k, v in pr_weights.items()) if pr_weights else "无历史记录"
 
     sys = EXECUTOR_CORRECTION_SYSTEM if error_count > 0 else EXECUTOR_SYSTEM
-    user_msg = f"用户画像: {profile_summary}\nPR记录: {pr_text}\n{history_text}\n训练策略: {json.dumps(plan_steps, ensure_ascii=False)}"
+    user_msg = _build_prompt_context(
+        agent_instruction=f"请把训练策略细化为可执行动作清单。PR记录: {pr_text}",
+        user_profile=user_profile,
+        mem0_context=state.get("mem0_context", ""),
+        recent_events=recent_events,
+        history_text=history_text,
+        current_plan_text=json.dumps(plan_steps, ensure_ascii=False),
+        user_input=state.get("user_input", ""),
+    )
     if error_count > 0:
         user_msg += f"\n⚠️ 第 {error_count + 1} 次修正。修正指令: {corrector_feedback}"
 
@@ -428,7 +564,33 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
             langfuse_parent=span.observation,
         )
 
-        exercises = result.get("exercises", [])
+        exercises = _normalize_exercises(result.get("exercises", []))
+        repaired = False
+        if not exercises:
+            repair_prompt = user_msg + (
+                "\n\n[结构化修复要求]\n"
+                "上一版返回缺少有效的 exercises 数组。"
+                "请严格返回 4 到 6 个训练动作，每个动作必须包含"
+                " name、sets、reps、weight、rest_seconds、notes。"
+                "禁止返回空数组，禁止省略动作名称。"
+            )
+            repaired_result = await _safe_llm_structured(
+                system_prompt=sys,
+                user_prompt=repair_prompt,
+                temperature=0.2,
+                max_tokens=1536,
+                fallback={"exercises": [{"name": "动态拉伸", "sets": 3, "reps": "15", "weight": "0kg", "notes": "安全热身"}], "duration_minutes": 20, "estimated_rpe": 2},
+                user_id=user_id,
+                db=db,
+                session_id=state.get("session_id"),
+                langfuse_parent=span.observation,
+            )
+            repaired_exercises = _normalize_exercises(repaired_result.get("exercises", []))
+            if repaired_exercises:
+                result = repaired_result
+                exercises = repaired_exercises
+                repaired = True
+
         duration = result.get("duration_minutes", 45)
         rpe = result.get("estimated_rpe", 7)
 
@@ -453,6 +615,7 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
             "duration_minutes": duration,
             "estimated_rpe": rpe,
             "tavily_results_count": len(tavily_results),
+            "repaired_empty_exercises": repaired,
         })
 
     return {
@@ -606,25 +769,54 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
     mem0_context = state.get("mem0_context", "")
-    profile_summary = _format_profile_for_prompt(user_profile, mem0_context)
     feedback = reflection.get("feedback", "")
     score = reflection.get("score", 85)
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
+    recent_events = state.get("recent_events", [])
     trace = get_trace_from_config(config)
 
     if intent == "training_plan":
         sys_prompt = RESPONSE_TRAINING_SYSTEM
-        ctx = f"用户需求: {user_input}\n画像: {profile_summary}\n{history_text}\n训练计划: {json.dumps([{'name': e['name'], 'sets': e.get('sets'), 'reps': e.get('reps'), 'weight': e.get('weight')} for e in exercises], ensure_ascii=False) if exercises else '无'}\n审查: {feedback} (评分: {score})"
+        ctx = _build_prompt_context(
+            agent_instruction=f"请向用户解释训练计划，并明确引用实际训练背景。审查结果: {feedback} (评分: {score})",
+            user_profile=user_profile,
+            mem0_context=mem0_context,
+            recent_events=recent_events,
+            history_text=history_text,
+            current_plan_text=json.dumps([{'name': e['name'], 'sets': e.get('sets'), 'reps': e.get('reps'), 'weight': e.get('weight')} for e in exercises], ensure_ascii=False) if exercises else '无',
+            user_input=user_input,
+        )
     elif intent == "diet_log":
         sys_prompt = RESPONSE_DIET_SYSTEM
-        ctx = f"用户输入: {user_input}\n画像: {profile_summary}\n{history_text}"
+        ctx = _build_prompt_context(
+            agent_instruction="请确认本次饮食记录并给出简明专业建议。",
+            user_profile=user_profile,
+            mem0_context=mem0_context,
+            recent_events=recent_events,
+            history_text=history_text,
+            user_input=user_input,
+        )
     elif intent == "profile_update":
         sys_prompt = RESPONSE_PROFILE_SYSTEM
-        ctx = f"用户输入: {user_input}\n画像: {profile_summary}\n{history_text}"
+        ctx = _build_prompt_context(
+            agent_instruction="请确认本次身体数据或画像更新，并说明系统已记住。",
+            user_profile=user_profile,
+            mem0_context=mem0_context,
+            recent_events=recent_events,
+            history_text=history_text,
+            user_input=user_input,
+        )
     else:
         sys_prompt = RESPONSE_CHAT_SYSTEM
-        ctx = f"用户输入: {user_input}\n画像: {profile_summary}\n{history_text}"
+        ctx = _build_prompt_context(
+            agent_instruction="请优先根据近期训练事实回答用户的问题，特别注意相对日期（今天/昨天）要映射到真实日期后再作答。",
+            user_profile=user_profile,
+            mem0_context=mem0_context,
+            recent_events=recent_events,
+            history_text=history_text,
+            user_input=user_input,
+        )
 
     with NodeSpan(
         trace, "response_builder",

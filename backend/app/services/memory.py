@@ -35,6 +35,24 @@ _SKIP_EXTRACTION_KEYWORDS = {
     "没事", "没关系", "不客气", "随便", "都行", "无所谓",
 }
 
+_MEMORY_SIGNAL_KEYWORDS = {
+    "体重", "身高", "体脂", "围度", "肌肉", "训练", "锻炼", "运动", "计划", "动作", "组", "次数",
+    "卧推", "深蹲", "硬拉", "引体", "推肩", "胸", "背", "腿", "肩", "手臂", "腹", "臀",
+    "减脂", "增肌", "维持", "热量", "蛋白", "碳水", "脂肪", "饮食", "早餐", "午餐", "晚餐",
+    "受伤", "疼", "疼痛", "酸痛", "恢复", "睡眠", "步数", "心率", "血压",
+    "weight", "height", "bodyfat", "body fat", "workout", "training", "exercise",
+    "calorie", "protein", "carb", "fat", "bench", "squat", "deadlift", "injury",
+    "male", "female", "gender", "tfcc", "wrist", "pain", "arm wrestling",
+    "\u7537", "\u5973", "\u7537\u7684", "\u5973\u7684", "\u6027\u522b",
+    "\u624b\u8155", "\u8155", "\u63b0\u624b\u8155", "\u638c\u6839", "\u5c3a\u4fa7",
+    "\u63b0\u624b\u8155", "\u63b0\u8155", "\u63b0\u624b", "\u53d7\u4f24",
+    "\u75db", "\u75bc", "\u9178", "\u4e0d\u8212\u670d",
+}
+
+_GENERIC_CHAT_PATTERNS = {
+    "今天几号", "今天不是", "几点", "星期几", "天气", "在吗", "收到", "好的", "谢谢", "嗯", "哦",
+}
+
 
 def _should_skip_extraction(text: str) -> bool:
     """
@@ -49,6 +67,28 @@ def _should_skip_extraction(text: str) -> bool:
     return False
 
 
+def should_capture_long_term_memory(text: str) -> bool:
+    stripped = text.strip()
+    lowered = stripped.lower()
+
+    if _should_skip_extraction(stripped):
+        return False
+
+    if any(pattern in stripped for pattern in _GENERIC_CHAT_PATTERNS):
+        return False
+
+    if any(keyword in stripped or keyword in lowered for keyword in _MEMORY_SIGNAL_KEYWORDS):
+        return True
+
+    has_metric_number = any(ch.isdigit() for ch in stripped) and any(
+        unit in lowered for unit in ("kg", "cm", "%", "分钟", "min", "kcal")
+    )
+    if has_metric_number:
+        return True
+
+    return False
+
+
 class MemoryService:
 
     @staticmethod
@@ -57,7 +97,7 @@ class MemoryService:
         # ──────────────────────────────────────────────────────────
         # 轻量前置过滤：跳过纯问候/空消息，避免每条消息都触发 LLM 调用
         # ──────────────────────────────────────────────────────────
-        if _should_skip_extraction(user_input):
+        if not should_capture_long_term_memory(user_input):
             return []
 
         # ──────────────────────────────────────────────────────────

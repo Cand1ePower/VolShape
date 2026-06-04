@@ -70,6 +70,11 @@ def get_openai_client(api_key: Optional[str] = None, base_url: Optional[str] = N
     return _clients[cache_key]
 
 
+def _client_supports_langfuse_parent(client: Any) -> bool:
+    module = getattr(client.__class__, "__module__", "") or ""
+    return module.startswith("langfuse.")
+
+
 async def llm_call(
     system_prompt: str,
     user_prompt: str,
@@ -120,7 +125,8 @@ async def llm_call(
             pass  # 不因追踪失败而影响主流程
     # ────────────────────────────────────────────────────────────────
 
-    kwargs.pop("langfuse_parent", None)
+    if not _client_supports_langfuse_parent(client):
+        kwargs.pop("langfuse_parent", None)
     start = time.perf_counter()
     try:
         response = await client.chat.completions.create(**kwargs)

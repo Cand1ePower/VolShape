@@ -3,8 +3,28 @@ import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database.models import UserProfile, UserMetrics, Events, WeeklySummary
-from app.services.memory import MemoryService
+from app.services.memory import MemoryService, should_capture_long_term_memory
 from app.services.compress import CompressionService
+
+
+@pytest.mark.anyio
+async def test_should_capture_long_term_memory_filters_generic_chat(anyio_backend):
+    assert should_capture_long_term_memory("今天不是3号吗") is False
+    assert should_capture_long_term_memory("谢谢，收到") is False
+
+
+@pytest.mark.anyio
+async def test_should_capture_long_term_memory_keeps_fitness_signal(anyio_backend):
+    assert should_capture_long_term_memory("我今天体重80kg，目标减脂") is True
+    assert should_capture_long_term_memory("昨天卧推做了5组，每组8次") is True
+
+@pytest.mark.anyio
+async def test_should_capture_long_term_memory_keeps_profile_and_injury_signal(anyio_backend):
+    assert should_capture_long_term_memory("\u6211\u662f\u7537\u7684") is True
+    assert should_capture_long_term_memory(
+        "\u6211\u662f\u7537\u7684\uff0c\u6628\u5929\u63b0\u624b\u8155\u5bfc\u81f4\u4eca\u5929\u6709\u70b9TFCC"
+    ) is True
+
 
 @pytest.mark.anyio
 async def test_memory_extraction_and_conflict_resolution(anyio_backend):

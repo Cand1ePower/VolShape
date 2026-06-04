@@ -52,6 +52,32 @@ def summarize_completion(plan_json: dict, completion: dict) -> dict:
     }
 
 
+def exercise_completion_details(plan_json: dict, completion: dict) -> list[dict]:
+    exercises = plan_json.get("exercises", []) if isinstance(plan_json, dict) else []
+    completed_keys = completion.get("completed_keys", []) if isinstance(completion, dict) else []
+    completed_map: dict[int, int] = {}
+
+    if isinstance(completed_keys, list):
+        for key in completed_keys:
+            try:
+                exercise_idx = int(str(key).split("-", 1)[0])
+            except (TypeError, ValueError):
+                continue
+            completed_map[exercise_idx] = completed_map.get(exercise_idx, 0) + 1
+
+    details = []
+    for idx, exercise in enumerate(exercises):
+        if not isinstance(exercise, dict):
+            continue
+        planned_sets = int(exercise.get("sets") or 0)
+        details.append({
+            "name": exercise.get("name"),
+            "planned_sets": planned_sets,
+            "completed_sets": completed_map.get(idx, 0),
+        })
+    return details
+
+
 def _plan_payload(plan: TrainingPlan) -> dict:
     return {
         "id": plan.id,
@@ -160,6 +186,7 @@ async def complete_workout(req: CompleteRequest, user_id: str = Depends(get_curr
                 "completed_sets": completion_summary["completed_sets"],
                 "completed_keys": completion_summary["completed_keys"],
                 "completion_rate": completion_summary["completion_rate"],
+                "exercise_completion": exercise_completion_details(plan_json, req.completion_data or {}),
             },
             event_date=datetime.date.today(),
         )

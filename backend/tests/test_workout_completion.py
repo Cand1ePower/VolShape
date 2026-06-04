@@ -69,3 +69,8 @@ async def test_complete_workout_records_partial_completed_sets():
         assert event.payload["completed_sets"] == 12
         assert event.payload["total_sets"] == 22
         assert event.payload["completion_rate"] == 0.55
+        assert event.payload["exercise_completion"][0]["name"] == "A"
+        assert event.payload["exercise_completion"][0]["planned_sets"] == 5
+        assert event.payload["exercise_completion"][0]["completed_sets"] == 4
+        assert event.payload["exercise_completion"][2]["name"] == "C"
+        assert event.payload["exercise_completion"][2]["completed_sets"] == 4

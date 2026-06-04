@@ -1,6 +1,6 @@
 from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, text
 from app.core.config import settings
 
 import os
@@ -65,3 +65,20 @@ async def init_db():
         # 如果需要重新建表，可以先 drop_all
         # await conn.run_sync(Base.metadata.drop_all)
         await conn.run_sync(Base.metadata.create_all)
+        await _ensure_schema_compatibility(conn)
+
+
+async def _ensure_schema_compatibility(conn) -> None:
+    dialect = conn.dialect.name.lower()
+    if "sqlite" in dialect:
+        columns = await conn.execute(text("PRAGMA table_info(conversation_sessions)"))
+        column_names = {row[1] for row in columns.fetchall()}
+        if "pinned_at" not in column_names:
+            await conn.execute(text("ALTER TABLE conversation_sessions ADD COLUMN pinned_at DATETIME"))
+    elif "postgresql" in dialect:
+        await conn.execute(
+            text(
+                "ALTER TABLE conversation_sessions "
+                "ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMP WITH TIME ZONE"
+            )
+        )

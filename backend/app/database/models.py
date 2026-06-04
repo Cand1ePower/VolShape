@@ -291,6 +291,24 @@ class ConversationMessage(Base):
     user: Mapped["UserProfile"] = relationship("UserProfile")
 
 
+class ConversationSession(Base):
+    """Chat conversation session metadata."""
+    __tablename__ = "conversation_sessions"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    user_id: Mapped[str] = mapped_column(String, ForeignKey("user_profile.user_id"), nullable=False, index=True)
+    title: Mapped[str] = mapped_column(String(120), nullable=False, default="New Chat")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    updated_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+    )
+    pinned_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
+    last_message_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped["UserProfile"] = relationship("UserProfile")
+
+
 class WeeklySummary(Base):
     """
     周报摘要表 (Layer 3 -> 4 记忆压缩缓存)

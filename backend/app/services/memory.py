@@ -1,66 +1,118 @@
-import json
 import datetime
-from typing import Dict, Any, List, Optional
-from sqlalchemy import select, desc
+import json
+import re
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.database.models import UserProfile, UserMetrics, Events
-from app.core.config import settings
 
-CORE_PROFILE_KEYS = {"height_cm", "gender", "birth_date", "goal", "training_years", "injuries", "medical_conditions"}
-METRICS_KEYS = {"weight", "body_fat", "muscle_mass", "bench_press", "squat", "deadlift"}
+from app.database.models import Events, UserMetrics, UserProfile
 
-
-async def _llm_extract_memory(user_input: str, user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
-    """
-    调用 LLM 从用户自然语言中提取结构化健身数据。
-    使用 MEMORY_EXTRACTION_SYSTEM 提示词，返回标准化的 extracted 列表。
-    """
-    from app.services.llm_client import llm_call_structured
-    from app.prompts import MEMORY_EXTRACTION_SYSTEM
-    result = await llm_call_structured(
-        system_prompt=MEMORY_EXTRACTION_SYSTEM,
-        user_prompt=f"用户输入: {user_input}",
-        temperature=0.0,
-        max_tokens=512,
-        user_id=user_id,
-        db=db,
-    )
-    return result.get("extracted", [])
-
-
-# 不值得提取的纯问候/闲聊关键词（避免对每条消息都调用 LLM）
-_SKIP_EXTRACTION_KEYWORDS = {
-    "hi", "hello", "你好", "嗨", "哈哈", "哈哈哈", "好的", "好", "ok", "okay",
-    "谢谢", "感谢", "谢", "对", "是的", "明白", "了解", "知道了", "好的好的",
-    "没事", "没关系", "不客气", "随便", "都行", "无所谓",
+CORE_PROFILE_KEYS = {
+    "height_cm",
+    "gender",
+    "birth_date",
+    "goal",
+    "training_years",
+    "injuries",
+    "medical_conditions",
 }
 
-_MEMORY_SIGNAL_KEYWORDS = {
-    "体重", "身高", "体脂", "围度", "肌肉", "训练", "锻炼", "运动", "计划", "动作", "组", "次数",
-    "卧推", "深蹲", "硬拉", "引体", "推肩", "胸", "背", "腿", "肩", "手臂", "腹", "臀",
-    "减脂", "增肌", "维持", "热量", "蛋白", "碳水", "脂肪", "饮食", "早餐", "午餐", "晚餐",
-    "受伤", "疼", "疼痛", "酸痛", "恢复", "睡眠", "步数", "心率", "血压",
-    "weight", "height", "bodyfat", "body fat", "workout", "training", "exercise",
-    "calorie", "protein", "carb", "fat", "bench", "squat", "deadlift", "injury",
-    "male", "female", "gender", "tfcc", "wrist", "pain", "arm wrestling",
-    "\u7537", "\u5973", "\u7537\u7684", "\u5973\u7684", "\u6027\u522b",
-    "\u624b\u8155", "\u8155", "\u63b0\u624b\u8155", "\u638c\u6839", "\u5c3a\u4fa7",
-    "\u63b0\u624b\u8155", "\u63b0\u8155", "\u63b0\u624b", "\u53d7\u4f24",
-    "\u75db", "\u75bc", "\u9178", "\u4e0d\u8212\u670d",
+MEMORY_EXTRACTION_SYSTEM_FLEX = """
+You are VolShape's long-term memory extractor.
+
+Goal:
+- Read one user message.
+- Extract stable profile facts, quantitative metrics, health/training states, injuries, and noteworthy events.
+- Prefer structured facts that are useful for future coaching.
+- Keys are NOT fixed. Create concise snake_case keys when needed.
+- If the message only contains trivial small talk or date/time chatter, return an empty list.
+
+Return strict JSON with this shape:
+{
+  "extracted": [
+    {
+      "type": "profile_core | metric | state | injury | event",
+      "key": "snake_case_key",
+      "value": "string | number | boolean | list",
+      "unit": "optional string",
+      "action": "optional add/remove for injury",
+      "confidence": 0.0,
+      "effective_at": "optional ISO timestamp or date",
+      "reason": "optional short explanation"
+    }
+  ]
+}
+
+Guidelines:
+- Use profile_core only for stable identity/profile fields such as height_cm, gender, birth_date, goal, training_years, injuries, medical_conditions.
+- Use metric for quantitative values, including custom ones like resting_heart_rate, sleep_hours, waist_cm, body_temperature_c.
+- Use state for latest non-numeric statuses such as current_illness, recovery_status, fatigue_status, tfcc_status, sleep_quality, stress_level.
+- Use injury when the user reports a new injury/pain problem or says an old injury recovered. Put the injury/problem in value and action in add/remove.
+- Use event for notable episodic facts that should appear in recent events even if they are not stable.
+- If the user says they are sick, ill, feverish, injured, in pain, or unusually fatigued, that should usually yield at least one state or injury item.
+- Avoid inventing facts not grounded in the message.
+""".strip()
+
+_SKIP_EXTRACTION_KEYWORDS = {
+    "hi",
+    "hello",
+    "你好",
+    "嗨",
+    "哈哈",
+    "好的",
+    "好",
+    "ok",
+    "okay",
+    "谢谢",
+    "感谢",
+    "谢了",
+    "对",
+    "是的",
+    "明白",
+    "了解",
+    "知道了",
+    "没事",
+    "没关系",
+    "不客气",
+    "随便",
+    "都行",
+    "无所谓",
 }
 
 _GENERIC_CHAT_PATTERNS = {
-    "今天几号", "今天不是", "几点", "星期几", "天气", "在吗", "收到", "好的", "谢谢", "嗯", "哦",
+    "今天几号",
+    "今天不是",
+    "几点",
+    "星期几",
+    "天气",
+    "在吗",
+    "收到",
 }
+
+_STATE_EVENT_TYPES = {"state", "event"}
+
+
+async def _llm_extract_memory(user_input: str, user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
+    from app.services.llm_client import llm_call_structured
+
+    result = await llm_call_structured(
+        system_prompt=MEMORY_EXTRACTION_SYSTEM_FLEX,
+        user_prompt=f"User message: {user_input}",
+        temperature=0.0,
+        max_tokens=700,
+        user_id=user_id,
+        db=db,
+    )
+    extracted = result.get("extracted", [])
+    return extracted if isinstance(extracted, list) else []
 
 
 def _should_skip_extraction(text: str) -> bool:
-    """
-    轻量前置过滤：跳过极短消息或纯问候，避免每条闲聊都触发额外的 LLM 调用。
-    策略是「宁可多送」而不是「严格过滤」，以避免漏掉有价值的数据。
-    """
     stripped = text.strip()
-    if len(stripped) < 4:
+    if not stripped:
+        return True
+    if len(stripped) < 2:
         return True
     if stripped.lower() in _SKIP_EXTRACTION_KEYWORDS:
         return True
@@ -69,125 +121,261 @@ def _should_skip_extraction(text: str) -> bool:
 
 def should_capture_long_term_memory(text: str) -> bool:
     stripped = text.strip()
-    lowered = stripped.lower()
-
     if _should_skip_extraction(stripped):
         return False
-
     if any(pattern in stripped for pattern in _GENERIC_CHAT_PATTERNS):
         return False
+    return True
 
-    if any(keyword in stripped or keyword in lowered for keyword in _MEMORY_SIGNAL_KEYWORDS):
-        return True
 
-    has_metric_number = any(ch.isdigit() for ch in stripped) and any(
-        unit in lowered for unit in ("kg", "cm", "%", "分钟", "min", "kcal")
-    )
-    if has_metric_number:
-        return True
+def _to_snake_case(value: str) -> str:
+    text = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "_", str(value).strip())
+    text = re.sub(r"_+", "_", text).strip("_").lower()
+    return text or "unknown_key"
 
-    return False
+
+def _coerce_numeric(value: Any) -> Optional[float]:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        cleaned = value.strip().replace(",", "")
+        match = re.search(r"-?\d+(?:\.\d+)?", cleaned)
+        if match:
+            try:
+                return float(match.group(0))
+            except ValueError:
+                return None
+    return None
+
+
+def _coerce_profile_value(key: str, value: Any) -> Any:
+    if key == "height_cm":
+        numeric = _coerce_numeric(value)
+        return numeric if numeric is not None else value
+    if key == "training_years":
+        numeric = _coerce_numeric(value)
+        return int(numeric) if numeric is not None else value
+    if key == "birth_date" and isinstance(value, str):
+        try:
+            return datetime.date.fromisoformat(value)
+        except ValueError:
+            return value
+    if key in {"injuries", "medical_conditions"}:
+        if isinstance(value, list):
+            return value
+        return [value] if value not in (None, "") else []
+    return value
+
+
+def _normalize_extracted_item(item: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    if not isinstance(item, dict):
+        return None
+
+    raw_key = item.get("key") or item.get("field") or item.get("name")
+    value = item.get("value")
+    if raw_key in (None, "") or value is None:
+        return None
+
+    key = _to_snake_case(str(raw_key))
+    item_type = str(item.get("type") or "").strip().lower()
+
+    if item_type == "profile":
+        item_type = "profile_core" if key in CORE_PROFILE_KEYS else "state"
+    elif item_type == "note":
+        item_type = "state"
+    elif item_type == "exercise_pr":
+        item_type = "metric"
+    elif not item_type:
+        item_type = "profile_core" if key in CORE_PROFILE_KEYS else "state"
+
+    return {
+        "type": item_type,
+        "key": key,
+        "value": value,
+        "unit": item.get("unit", ""),
+        "action": item.get("action"),
+        "confidence": item.get("confidence"),
+        "effective_at": item.get("effective_at"),
+        "reason": item.get("reason"),
+    }
+
+
+def _build_dynamic_entry(item: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {
+        "value": item["value"],
+        "type": item["type"],
+        "updated_at": datetime.datetime.utcnow().isoformat(),
+        "source": "agent_extracted",
+    }
+    if item.get("unit"):
+        payload["unit"] = item["unit"]
+    if item.get("confidence") is not None:
+        payload["confidence"] = item["confidence"]
+    if item.get("effective_at"):
+        payload["effective_at"] = item["effective_at"]
+    if item.get("reason"):
+        payload["reason"] = item["reason"]
+    return payload
+
+
+def _set_dynamic_attribute(profile: UserProfile, key: str, item: Dict[str, Any]) -> bool:
+    current = dict(profile.dynamic_attributes or {})
+    next_value = _build_dynamic_entry(item)
+    if current.get(key) == next_value:
+        return False
+    current[key] = next_value
+    profile.dynamic_attributes = current
+    return True
+
+
+def _build_event_payload(item: Dict[str, Any]) -> Dict[str, Any]:
+    payload = {
+        "key": item["key"],
+        "value": item["value"],
+        "type": item["type"],
+        "timestamp": datetime.datetime.utcnow().isoformat(),
+    }
+    if item.get("unit"):
+        payload["unit"] = item["unit"]
+    if item.get("confidence") is not None:
+        payload["confidence"] = item["confidence"]
+    if item.get("effective_at"):
+        payload["effective_at"] = item["effective_at"]
+    if item.get("reason"):
+        payload["reason"] = item["reason"]
+    return payload
+
+
+def _changes_to_mem0_summary(changes: List[Dict[str, Any]]) -> str:
+    if not changes:
+        return ""
+    lines = ["User memory updates:"]
+    for change in changes:
+        key = change.get("key")
+        value = change.get("new", change.get("value"))
+        layer = change.get("layer")
+        lines.append(f"- layer{layer}: {key} = {value}")
+    return "\n".join(lines)
 
 
 class MemoryService:
-
     @staticmethod
     async def extract_and_sync_memory(user_input: str, user_id: str, db: AsyncSession) -> List[Dict[str, Any]]:
-        extracted_items = []
-        # ──────────────────────────────────────────────────────────
-        # 轻量前置过滤：跳过纯问候/空消息，避免每条消息都触发 LLM 调用
-        # ──────────────────────────────────────────────────────────
         if not should_capture_long_term_memory(user_input):
             return []
 
-        # ──────────────────────────────────────────────────────────
-        # 直接调用 LLM 从用户自然语言中提取所有结构化健身数据
-        # （使用 MEMORY_EXTRACTION_SYSTEM 提示词，比正则更灵活精准）
-        # ──────────────────────────────────────────────────────────
         try:
-            extracted_items = await _llm_extract_memory(user_input, user_id, db)
-        except Exception as e:
-            print(f"[Memory Extraction Error] LLM 提取失败，跳过本轮存储: {e}")
+            raw_items = await _llm_extract_memory(user_input, user_id, db)
+        except Exception as exc:
+            print(f"[Memory Extraction Error] {exc}")
             return []
 
-        # Sync extracted items to DB
-        changes = []
-        for item in extracted_items:
+        normalized_items = [item for item in (_normalize_extracted_item(raw) for raw in raw_items) if item]
+        if not normalized_items:
+            return []
+
+        profile = await db.get(UserProfile, user_id)
+        if not profile:
+            profile = UserProfile(user_id=user_id)
+            db.add(profile)
+            await db.flush()
+
+        changes: List[Dict[str, Any]] = []
+
+        for item in normalized_items:
             key = item["key"]
-            val = item["value"]
+            value = item["value"]
+            item_type = item["type"]
 
-            profile = await db.get(UserProfile, user_id)
-            if not profile:
-                profile = UserProfile(user_id=user_id)
-                db.add(profile)
-                await db.flush()
+            if item_type == "profile_core" and key in CORE_PROFILE_KEYS:
+                coerced_value = _coerce_profile_value(key, value)
+                old_value = getattr(profile, key, None)
+                if old_value != coerced_value:
+                    setattr(profile, key, coerced_value)
+                    changes.append({"key": key, "old": old_value, "new": coerced_value, "layer": 1})
+                continue
 
-            if item["type"] == "profile" or key in CORE_PROFILE_KEYS:
-                old_val = getattr(profile, key, None)
-                if old_val != val:
-                    setattr(profile, key, val)
-                    changes.append({"key": key, "old": old_val, "new": val, "layer": 1})
+            if item_type == "injury":
+                current_injuries = list(profile.injuries or [])
+                action = str(item.get("action") or "add").lower()
+                injury_name = str(value)
 
-            elif item["type"] in ("metric", "exercise_pr"):
-                stmt = select(UserMetrics).where(
-                    UserMetrics.user_id == user_id,
-                    UserMetrics.metric_type == key,
-                ).order_by(desc(UserMetrics.recorded_at)).limit(1)
-                result = await db.execute(stmt)
-                latest_metric = result.scalars().first()
+                if action == "remove" and injury_name in current_injuries:
+                    profile.injuries = [inj for inj in current_injuries if inj != injury_name]
+                    changes.append({"key": "injuries", "old": current_injuries, "new": profile.injuries, "layer": 1})
+                elif action != "remove" and injury_name not in current_injuries:
+                    profile.injuries = current_injuries + [injury_name]
+                    changes.append({"key": "injuries", "old": current_injuries, "new": profile.injuries, "layer": 1})
 
-                if not latest_metric or float(latest_metric.value) != float(val):
-                    new_metric = UserMetrics(
+                db.add(
+                    Events(
                         user_id=user_id,
-                        metric_type=key,
-                        value=val,
-                        unit=item.get("unit", ""),
-                        source="agent_extracted",
+                        event_type="injury",
+                        payload={
+                            "key": key,
+                            "injury": injury_name,
+                            "action": action,
+                            "timestamp": datetime.datetime.utcnow().isoformat(),
+                        },
+                        event_date=datetime.date.today(),
                     )
-                    db.add(new_metric)
-                    changes.append({
-                        "key": key,
-                        "old": float(latest_metric.value) if latest_metric else None,
-                        "new": val,
-                        "layer": 2,
-                    })
-
-            elif item["type"] == "note":
-                note_event = Events(
-                    user_id=user_id,
-                    event_type=key,
-                    payload={"value": val, "timestamp": datetime.datetime.utcnow().isoformat()},
-                    event_date=datetime.date.today(),
                 )
-                db.add(note_event)
-                changes.append({"key": key, "value": val, "layer": 3})
+                continue
 
-            elif item["type"] == "injury":
-                current_injuries = profile.injuries or []
-                action = item.get("action", "add")
+            if item_type == "metric":
+                numeric_value = _coerce_numeric(value)
+                if numeric_value is None:
+                    item_type = "state"
+                    item["type"] = "state"
+                else:
+                    stmt = (
+                        select(UserMetrics)
+                        .where(UserMetrics.user_id == user_id, UserMetrics.metric_type == key)
+                        .order_by(desc(UserMetrics.recorded_at))
+                        .limit(1)
+                    )
+                    result = await db.execute(stmt)
+                    latest_metric = result.scalars().first()
+                    latest_value = float(latest_metric.value) if latest_metric else None
+                    if latest_metric is None or latest_value != numeric_value:
+                        db.add(
+                            UserMetrics(
+                                user_id=user_id,
+                                metric_type=key,
+                                value=numeric_value,
+                                unit=str(item.get("unit") or ""),
+                                source="agent_extracted",
+                            )
+                        )
+                        changes.append({"key": key, "old": latest_value, "new": numeric_value, "layer": 2})
+                    continue
 
-                if action == "add" and val not in current_injuries:
-                    profile.injuries = list(current_injuries) + [val]
-                    changes.append({"key": "injuries", "old": current_injuries, "new": profile.injuries, "layer": 1})
-                    injury_event = Events(
-                        user_id=user_id, event_type="injury",
-                        payload={"action": "add_injury", "injury": val},
+            if item_type in _STATE_EVENT_TYPES or key not in CORE_PROFILE_KEYS:
+                updated = _set_dynamic_attribute(profile, key, item)
+                db.add(
+                    Events(
+                        user_id=user_id,
+                        event_type=key if item_type == "state" else "event",
+                        payload=_build_event_payload(item),
                         event_date=datetime.date.today(),
                     )
-                    db.add(injury_event)
-
-                elif action == "remove" and val in current_injuries:
-                    profile.injuries = [i for i in current_injuries if i != val]
-                    changes.append({"key": "injuries", "old": current_injuries, "new": profile.injuries, "layer": 1})
-                    injury_event = Events(
-                        user_id=user_id, event_type="injury",
-                        payload={"action": "remove_injury", "injury": val},
-                        event_date=datetime.date.today(),
-                    )
-                    db.add(injury_event)
+                )
+                if updated:
+                    changes.append({"key": key, "value": value, "new": value, "layer": 2})
 
         if changes:
             await db.commit()
+            try:
+                from app.services.mem0_client import add_memory_async
+
+                summary = _changes_to_mem0_summary(changes)
+                if summary:
+                    await add_memory_async([{"role": "system", "content": summary}], user_id)
+            except Exception as exc:
+                print(f"[mem0 Structured Memory Error] {exc}")
+
         return changes
 
     @staticmethod
@@ -196,47 +384,49 @@ class MemoryService:
         if not profile:
             return {
                 "user_id": user_id,
-                "height_cm": None, "gender": None, "goal": None,
-                "training_years": None, "injuries": [], "medical_conditions": [],
+                "height_cm": None,
+                "gender": None,
+                "goal": None,
+                "training_years": None,
+                "injuries": [],
+                "medical_conditions": [],
+                "dynamic_attributes": {},
                 "metrics": {},
             }
 
-        stmt = select(UserMetrics).where(UserMetrics.user_id == user_id).order_by(UserMetrics.metric_type, desc(UserMetrics.recorded_at))
+        stmt = select(UserMetrics).where(UserMetrics.user_id == user_id).order_by(
+            UserMetrics.metric_type,
+            desc(UserMetrics.recorded_at),
+        )
         result = await db.execute(stmt)
         all_metrics = result.scalars().all()
 
-        latest_metrics = {}
-        for m in all_metrics:
-            if m.metric_type not in latest_metrics:
-                latest_metrics[m.metric_type] = {
-                    "value": float(m.value),
-                    "unit": m.unit,
-                    "recorded_at": m.recorded_at.isoformat(),
+        latest_metrics: Dict[str, Dict[str, Any]] = {}
+        for metric in all_metrics:
+            if metric.metric_type not in latest_metrics:
+                latest_metrics[metric.metric_type] = {
+                    "value": float(metric.value),
+                    "unit": metric.unit,
+                    "recorded_at": metric.recorded_at.isoformat(),
                 }
 
         return {
             "user_id": user_id,
-            "height_cm": float(profile.height_cm) if profile.height_cm else None,
+            "height_cm": float(profile.height_cm) if profile.height_cm is not None else None,
             "gender": profile.gender,
             "goal": profile.goal,
             "training_years": profile.training_years,
             "injuries": profile.injuries or [],
             "medical_conditions": profile.medical_conditions or [],
+            "dynamic_attributes": profile.dynamic_attributes or {},
             "metrics": latest_metrics,
         }
 
     @staticmethod
     async def prune_garbage_episodic_memory(user_id: str, db: AsyncSession) -> List[int]:
-        """
-        Agent 记忆自我净化与垃圾回收 (Garbage Collection)。
-        从数据库加载该用户的 Layer 3 近期事件流水，调用大模型识别无价值噪音并执行物理删除 (DELETE)。
-        """
-        from app.database.models import Events
-        from app.services.llm_client import llm_call_structured
         from app.prompts import EPISODIC_MEMORY_GC_SYSTEM
-        from sqlalchemy import select, delete
+        from app.services.llm_client import llm_call_structured
 
-        # 1. 查询该用户最近的 30 条事件流水记录
         stmt = select(Events).where(Events.user_id == user_id).order_by(desc(Events.recorded_at)).limit(30)
         result = await db.execute(stmt)
         events = result.scalars().all()
@@ -244,18 +434,11 @@ class MemoryService:
         if not events:
             return []
 
-        # 2. 序列化事件列表为大模型输入
-        serialized_events = []
-        for ev in events:
-            serialized_events.append({
-                "id": ev.id,
-                "type": ev.event_type,
-                "date": str(ev.event_date),
-                "payload": ev.payload
-            })
-
-        # 3. 调用大模型对近期记忆做检查，识别无长期参考健身价值的数据
-        user_prompt = f"当前待审查的 Layer 3 时序事件日志:\n{json.dumps(serialized_events, ensure_ascii=False)}"
+        serialized_events = [
+            {"id": event.id, "type": event.event_type, "date": str(event.event_date), "payload": event.payload}
+            for event in events
+        ]
+        user_prompt = f"Current Layer 3 recent events:\n{json.dumps(serialized_events, ensure_ascii=False)}"
 
         try:
             resp = await llm_call_structured(
@@ -267,20 +450,15 @@ class MemoryService:
                 db=db,
             )
             prune_ids = resp.get("prune_event_ids", [])
-
-            # 过滤以确保大模型返回的 ID 确实在这些事件里，防止大模型捏造/越界删除
-            valid_ids = [ev.id for ev in events]
-            ids_to_delete = [pid for pid in prune_ids if pid in valid_ids]
+            valid_ids = [event.id for event in events]
+            ids_to_delete = [item_id for item_id in prune_ids if item_id in valid_ids]
 
             if ids_to_delete:
-                # 4. 执行物理删除 (DELETE)
-                del_stmt = delete(Events).where(Events.id.in_(ids_to_delete))
-                await db.execute(del_stmt)
+                await db.execute(delete(Events).where(Events.id.in_(ids_to_delete)))
                 await db.commit()
-                print(f"[Memory GC] Successfully compacted & pruned {len(ids_to_delete)} garbage events for user {user_id}. Deleted IDs: {ids_to_delete}")
+                print(f"[Memory GC] Deleted {len(ids_to_delete)} events for user {user_id}: {ids_to_delete}")
                 return ids_to_delete
-
-        except Exception as e:
-            print(f"[Memory GC Error] Failed to run episodic memory garbage collection: {e}")
+        except Exception as exc:
+            print(f"[Memory GC Error] {exc}")
 
         return []

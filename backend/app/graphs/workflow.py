@@ -49,6 +49,16 @@ def _format_profile_for_prompt(profile: dict, mem0_context: str = "") -> str:
         for key, val in metrics.items():
             if isinstance(val, dict):
                 parts.append(f"{key}: {val.get('value', '')}{val.get('unit', '')}")
+
+    dynamic_attributes = profile.get("dynamic_attributes", {})
+    if isinstance(dynamic_attributes, dict):
+        for key, val in dynamic_attributes.items():
+            if not isinstance(val, dict):
+                continue
+            value = val.get("value")
+            unit = val.get("unit", "")
+            if value not in (None, "", []):
+                parts.append(f"{key}: {value}{unit}")
                 
     # Add recent events summary (no training plans here, only somatic metrics/notes)
     recent = profile.get("_recent_events", [])
@@ -195,6 +205,14 @@ def _build_prompt_context(
 
     if current_plan_text:
         sections.append(f"[当前提取/生成的训练计划]\n{current_plan_text}\n[当前提取/生成的训练计划结束]")
+
+    conflict_resolution = """[记忆冲突处理规则]
+当收到的结构化数据与非结构化语义记忆(Mem0)发生冲突时，必须绝对遵守以下优先级：
+1. 最高优先级：[用户这次的真实输入]
+2. 次高优先级：[真实当前日期时间] 和 [用户多层记忆]（来自系统数据库的结构化事实，绝对准确）
+3. 最低优先级：[Mem0提取的上下文记忆]（仅作为补充偏好参考，若遇到与前两者相悖的事实型指标，请忽略 Mem0 数据）
+[记忆冲突处理规则结束]"""
+    sections.append(conflict_resolution)
 
     sections.append(f"[用户这次的真实输入]\n{user_input}\n[用户这次的真实输入结束]")
     return "\n\n".join(section for section in sections if section)

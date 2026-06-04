@@ -181,6 +181,7 @@ class UserProfile(Base):
     # 伤病和医疗史使用 JSON list 存储，保证对不同数据库的兼容性
     injuries: Mapped[Optional[list]] = mapped_column(JSON, default=list)
     medical_conditions: Mapped[Optional[list]] = mapped_column(JSON, default=list)
+    dynamic_attributes: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.datetime.utcnow
     )

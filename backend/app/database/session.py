@@ -75,10 +75,23 @@ async def _ensure_schema_compatibility(conn) -> None:
         column_names = {row[1] for row in columns.fetchall()}
         if "pinned_at" not in column_names:
             await conn.execute(text("ALTER TABLE conversation_sessions ADD COLUMN pinned_at DATETIME"))
+
+        profile_columns = await conn.execute(text("PRAGMA table_info(user_profile)"))
+        profile_column_names = {row[1] for row in profile_columns.fetchall()}
+        if "dynamic_attributes" not in profile_column_names:
+            await conn.execute(
+                text("ALTER TABLE user_profile ADD COLUMN dynamic_attributes JSON DEFAULT '{}' NOT NULL")
+            )
     elif "postgresql" in dialect:
         await conn.execute(
             text(
                 "ALTER TABLE conversation_sessions "
                 "ADD COLUMN IF NOT EXISTS pinned_at TIMESTAMP WITH TIME ZONE"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE user_profile "
+                "ADD COLUMN IF NOT EXISTS dynamic_attributes JSONB DEFAULT '{}'::jsonb NOT NULL"
             )
         )

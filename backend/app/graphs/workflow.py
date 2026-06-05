@@ -1,4 +1,4 @@
-import json
+﻿import json
 import asyncio
 import datetime
 from typing import Any, Dict, List, Optional
@@ -29,6 +29,7 @@ MAX_CORRECTION_LOOPS = 1
 
 
 def _format_profile_for_prompt(profile: dict, mem0_context: str = "") -> str:
+    del mem0_context
     parts = []
     if profile.get("height_cm"):
         parts.append(f"身高: {profile['height_cm']}cm")
@@ -40,10 +41,10 @@ def _format_profile_for_prompt(profile: dict, mem0_context: str = "") -> str:
     if profile.get("training_years"):
         parts.append(f"训练年限: {profile['training_years']}年")
     if profile.get("injuries"):
-        parts.append(f"⚠️ 伤病/限制: {', '.join(profile['injuries'])}")
+        parts.append(f"伤病/限制: {', '.join(profile['injuries'])}")
     if profile.get("medical_conditions"):
-        parts.append(f"医疗状况: {', '.join(profile['medical_conditions'])}")
-        
+        parts.append(f"医疗情况: {', '.join(profile['medical_conditions'])}")
+
     metrics = profile.get("metrics", {})
     if isinstance(metrics, dict):
         for key, val in metrics.items():
@@ -59,16 +60,14 @@ def _format_profile_for_prompt(profile: dict, mem0_context: str = "") -> str:
             unit = val.get("unit", "")
             if value not in (None, "", []):
                 parts.append(f"{key}: {value}{unit}")
-                
-    # Add recent events summary (no training plans here, only somatic metrics/notes)
+
     recent = profile.get("_recent_events", [])
     if recent:
         diet_count = sum(1 for e in recent if e.get("type") == "diet")
         if diet_count:
             parts.append(f"近期饮食记录: {diet_count} 条")
 
-    return "; ".join(parts) if parts else "新用户，无历史数据"
-
+    return "; ".join(parts) if parts else "新用户，暂无结构化画像数据"
 
 def _actual_sets_by_exercise(plan_json: dict, completion_data: dict) -> Dict[int, int]:
     completed_map: Dict[int, int] = {}
@@ -122,13 +121,13 @@ def _format_recent_training_context(profile: dict, recent_events: List[Dict[str,
                 if actual_sets is None:
                     ex_details.append(f"{name}(计划{planned_sets}组)")
                 else:
-                    ex_details.append(f"{name}(计划{planned_sets}组/实际{actual_sets}组)")
+                    ex_details.append(f"{name}(计划{planned_sets}组, 实际{actual_sets}组)")
 
             completion_summary = ""
             if status_value == "completed":
                 total_sets = int(completion_data.get("total_sets") or sum(int(e.get("sets") or 0) for e in exercises if isinstance(e, dict)))
                 completed_sets = int(completion_data.get("completed_sets") or sum(actual_sets_map.values()))
-                completion_summary = f" | 总完成: {completed_sets}/{total_sets}组"
+                completion_summary = f" | 总完成 {completed_sets}/{total_sets}组"
 
             plan_summaries.append(
                 f"- 日期: {p.get('target_date')} | 计划: {title} | 状态: {status_label}{completion_summary} | 动作: {', '.join(ex_details)}"
@@ -147,7 +146,6 @@ def _format_recent_training_context(profile: dict, recent_events: List[Dict[str,
 
     return "\n".join(sections)
 
-
 def _format_current_datetime_context() -> str:
     now = datetime.datetime.now()
     today = now.date()
@@ -159,7 +157,6 @@ def _format_current_datetime_context() -> str:
         f"- 昨天: {yesterday.isoformat()}\n"
         "[真实当前日期时间结束]"
     )
-
 
 def _normalize_exercises(raw_exercises: Any) -> List[Dict[str, Any]]:
     if not isinstance(raw_exercises, list):
@@ -207,23 +204,22 @@ def _build_prompt_context(
         sections.append(f"[当前提取/生成的训练计划]\n{current_plan_text}\n[当前提取/生成的训练计划结束]")
 
     conflict_resolution = """[记忆冲突处理规则]
-当收到的结构化数据与非结构化语义记忆(Mem0)发生冲突时，必须绝对遵守以下优先级：
+当收到的结构化数据与非结构化语义记忆(Mem0)发生冲突时，必须遵守以下优先级：
 1. 最高优先级：[用户这次的真实输入]
-2. 次高优先级：[真实当前日期时间] 和 [用户多层记忆]（来自系统数据库的结构化事实，绝对准确）
-3. 最低优先级：[Mem0提取的上下文记忆]（仅作为补充偏好参考，若遇到与前两者相悖的事实型指标，请忽略 Mem0 数据）
+2. 次高优先级：[真实当前日期时间] 和 [用户多层记忆]（来自数据库的结构化事实）
+3. 最低优先级：[Mem0提取的上下文记忆]（仅作补充偏好参考，若与前两者冲突，请忽略 Mem0 数据）
 [记忆冲突处理规则结束]"""
     sections.append(conflict_resolution)
 
     sections.append(f"[用户这次的真实输入]\n{user_input}\n[用户这次的真实输入结束]")
     return "\n\n".join(section for section in sections if section)
 
-
 async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession) -> str:
     from app.database.models import TrainingPlan
     import datetime
     import uuid
     plan_id = str(uuid.uuid4())
-    plan_json["plan_id"] = plan_id  # 将物理 UUID 回填至 plan_json，使前端卡片渲染时能获取 plan_id
+    plan_json["plan_id"] = plan_id  # 灏嗙墿鐞?UUID 鍥炲～鑷?plan_json锛屼娇鍓嶇鍗＄墖娓叉煋鏃惰兘鑾峰彇 plan_id
     new_plan = TrainingPlan(
         id=plan_id,
         user_id=user_id,
@@ -243,17 +239,15 @@ def _format_history(history: List[Dict[str, Any]]) -> str:
     for msg in history:
         role = "用户" if msg.get("role") == "user" else "AI"
         content = msg.get("content", "")
-        # 如果是 AI，且携带了卡片信息，我们将卡片里具体的动作和标题回填到对话历史中，让 AI 可以深刻感知
         custom_card = msg.get("customCard")
         card_info = ""
         if custom_card and custom_card.get("type") == "workout_card":
             ex_names = [e.get("name") for e in custom_card.get("exercises", []) if e.get("name")]
             card_info = f"【系统生成的卡片: {custom_card.get('title')}，包含动作: {', '.join(ex_names)}】"
-            
-        parts.append(f"{role}: {content}{card_info}")
-        
-    return "\n[历史对话上下文]\n" + "\n".join(parts) + "\n[历史对话上下文结束]\n"
 
+        parts.append(f"{role}: {content}{card_info}")
+
+    return "\n[历史对话上下文]\n" + "\n".join(parts) + "\n[历史对话上下文结束]\n"
 
 async def _safe_llm_structured(
     system_prompt: str,
@@ -264,7 +258,7 @@ async def _safe_llm_structured(
     user_id: Optional[str] = None,
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
-    langfuse_parent: Optional[Any] = None,  # 传入 NodeSpan._span 以建立 Langfuse 嵌套追踪
+    langfuse_parent: Optional[Any] = None,  # 浼犲叆 NodeSpan._span 浠ュ缓绔?Langfuse 宓屽杩借釜
 ) -> dict:
     try:
         return await llm_call_structured(
@@ -280,9 +274,7 @@ async def _safe_llm_structured(
         raise LLMGatewayError(str(e), details={"error_type": e.__class__.__name__}) from e
 
 
-# ═══════════════════════════════════════════════════════════════
-# 1. Intent Classifier
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 1. Intent Classifier
 async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -298,7 +290,7 @@ async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> D
         },
         metadata={"node_order": 1},
     ) as span:
-        # 同步提取和写入结构化记忆（L1/L2/L3 层）
+        # 鍚屾鎻愬彇鍜屽啓鍏ョ粨鏋勫寲璁板繂锛圠1/L2/L3 灞傦級
         changes = await MemoryService.extract_and_sync_memory(user_input, user_id, db)
 
         result = await _safe_llm_structured(
@@ -310,7 +302,7 @@ async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> D
             user_id=user_id,
             db=db,
             session_id=state.get("session_id"),
-            langfuse_parent=span.observation,  # 嵌套在 intent_classifier span 下
+            langfuse_parent=span.observation,
         )
         intent = result.get("intent", "chat")
         if intent not in ("training_plan", "diet_log", "profile_update", "chat"):
@@ -325,9 +317,7 @@ async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> D
     return {"intent": intent, "route": intent}
 
 
-# ═══════════════════════════════════════════════════════════════
-# 2. Profile Retrieval
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 2. Profile Retrieval
 async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -378,9 +368,7 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
     return {"user_profile": profile, "recent_events": recent, "mem0_context": state.get("mem0_context", "")}
 
 
-# ═══════════════════════════════════════════════════════════════
-# 3. Planner
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 3. Planner
 async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -414,10 +402,10 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
             ),
             temperature=0.4,
             fallback={"plan_steps": [
-                "Step 1: 全身关节热身与动态拉伸 (5-10分钟)",
+                "Step 1: 全身关节热身与动态拉伸（5-10分钟）",
                 "Step 2: 主要复合动作训练",
                 "Step 3: 辅助孤立动作训练",
-                "Step 4: 整理拉伸与泡沫轴放松 (5分钟)",
+                "Step 4: 整理拉伸与放松（5分钟）",
             ]},
             user_id=user_id,
             db=db,
@@ -430,9 +418,7 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     return {"plan_steps": plan_steps}
 
 
-# ═══════════════════════════════════════════════════════════════
-# 4. Quick Combined (快速模式)
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 4. Quick Combined (蹇€熸ā寮?
 async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -452,7 +438,7 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
         latest = r.scalars().first()
         if latest:
             pr_weights[mt] = float(latest.value)
-    pr_text = ", ".join(f"{k}: {v}kg" for k, v in pr_weights.items()) if pr_weights else "无历史记录"
+    pr_text = ", ".join(f"{k}: {v}kg" for k, v in pr_weights.items()) if pr_weights else "暂无 PR 记录"
 
     with NodeSpan(
         trace, "quick_combined",
@@ -481,7 +467,7 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
                 "exercises": [{"name": "动态拉伸", "sets": 3, "reps": "15", "weight": "0kg", "notes": "热身"}],
                 "duration_minutes": 30, "estimated_rpe": 3, "safety_score": 85,
                 "final_response": "已为您生成快速训练计划，请查看下方卡片。",
-                "disclaimer": "如有疼痛请立即停止",
+                "disclaimer": "如有疼痛请立即停止。",
             },
             user_id=user_id,
             db=db,
@@ -490,8 +476,8 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
         )
 
         exercises = result.get("exercises", [])
-        final_response = result.get("final_response", "已为您准备好训练计划！")
-        disclaimer = result.get("disclaimer", "如有疼痛请立即停止")
+        final_response = result.get("final_response", "已为您准备好训练计划。")
+        disclaimer = result.get("disclaimer", "如有疼痛请立即停止。")
         safety_score = result.get("safety_score", 85)
 
         use_sheet = state.get("use_training_sheet", False)
@@ -525,9 +511,7 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     }
 
 
-# ═══════════════════════════════════════════════════════════════
-# 5. Executor (仅详细模式)
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 5. Executor (浠呰缁嗘ā寮?
 async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -547,7 +531,7 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
         latest = r.scalars().first()
         if latest:
             pr_weights[mt] = float(latest.value)
-    pr_text = ", ".join(f"{k}: {v}kg" for k, v in pr_weights.items()) if pr_weights else "无历史记录"
+    pr_text = ", ".join(f"{k}: {v}kg" for k, v in pr_weights.items()) if pr_weights else "暂无 PR 记录"
 
     sys = EXECUTOR_CORRECTION_SYSTEM if error_count > 0 else EXECUTOR_SYSTEM
     user_msg = _build_prompt_context(
@@ -560,7 +544,7 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
         user_input=state.get("user_input", ""),
     )
     if error_count > 0:
-        user_msg += f"\n⚠️ 第 {error_count + 1} 次修正。修正指令: {corrector_feedback}"
+        user_msg += f"\n第 {error_count + 1} 次修正。修正指令: {corrector_feedback}"
 
     with NodeSpan(
         trace, "executor",
@@ -642,9 +626,7 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     }
 
 
-# ═══════════════════════════════════════════════════════════════
-# 6. Evaluator (仅详细模式)
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 6. Evaluator (浠呰缁嗘ā寮?
 async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -678,7 +660,14 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
     ) as span:
         review = await _safe_llm_structured(
             system_prompt=EVALUATOR_SYSTEM,
-            user_prompt=f"用户画像: {profile_summary}\n训练计划:\n{exercises_text}\nACWR: {acwr_result['acwr']}, 风险等级: {acwr_result['risk']}\n当前重试次数: {error_count}",
+            user_prompt=(
+                f"用户画像: {profile_summary}\n"
+                f"训练计划:\n{exercises_text}\n"
+                f"ACWR: {acwr_result['acwr']}, 风险等级: {acwr_result['risk']}, "
+                f"历史天数: {acwr_result.get('history_days', 0)}, "
+                f"近28天训练次数: {acwr_result.get('training_sessions_28d', 0)}\n"
+                f"当前重试次数: {error_count}"
+            ),
             temperature=0.2, max_tokens=1536,
             fallback={"score": 85, "feedback": "自动审查通过", "risk": "low"},
             user_id=user_id,
@@ -696,7 +685,7 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
         if acwr_result["risk"] == "high" and execution_results.get("estimated_rpe", 7) > 3:
             if score > 80:
                 score = 60
-                feedback += " 【ACWR 安全覆盖】急慢性负荷比过高，强制降级。"
+                feedback += " 【ACWR安全覆盖】急慢性负荷比过高，已强制降级。"
                 risk = "high"
                 acwr_override = True
 
@@ -704,7 +693,7 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
         force_pass = False
         if error_count >= MAX_CORRECTION_LOOPS:
             score = 85
-            feedback += f" 【已达最大修正次数 {MAX_CORRECTION_LOOPS}，强制通过】"
+            feedback += f" 【已达最大修正次数 {MAX_CORRECTION_LOOPS}，强制通过。】"
             risk = "low"
             force_pass = True
 
@@ -725,9 +714,7 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
     }
 
 
-# ═══════════════════════════════════════════════════════════════
-# 7. Corrector (仅详细模式)
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 7. Corrector (浠呰缁嗘ā寮?
 async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -749,14 +736,14 @@ async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str,
             system_prompt=CORRECTOR_SYSTEM,
             user_prompt=f"评估反馈: {feedback}\n当前计划: {json.dumps(exercises, ensure_ascii=False)}",
             temperature=0.3, max_tokens=1024,
-            fallback={"correction_summary": "降为主动恢复拉伸日", "specific_actions": [], "safety_override": True},
+            fallback={"correction_summary": "降为更保守的主动恢复与拉伸训练", "specific_actions": [], "safety_override": True},
             user_id=user_id,
             db=db,
             session_id=state.get("session_id"),
             langfuse_parent=span.observation,
         )
 
-        combined = f"【第{error_count}次修正】{correction.get('correction_summary', '')}"
+        combined = f"【第 {error_count} 次修正】{correction.get('correction_summary', '')}"
         if correction.get("specific_actions"):
             combined += f"\n具体措施: {'; '.join(correction['specific_actions'])}"
 
@@ -770,9 +757,7 @@ async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str,
     return {"error_count": error_count, "corrector_feedback": combined, "route": "executor"}
 
 
-# ═══════════════════════════════════════════════════════════════
-# 8. Response Builder (详细模式 / 非训练意图的通用回复节点)
-# ═══════════════════════════════════════════════════════════════
+# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 8. Response Builder (璇︾粏妯″紡 / 闈炶缁冩剰鍥剧殑閫氱敤鍥炲鑺傜偣)
 async def response_builder_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -802,13 +787,13 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
             mem0_context=mem0_context,
             recent_events=recent_events,
             history_text=history_text,
-            current_plan_text=json.dumps([{'name': e['name'], 'sets': e.get('sets'), 'reps': e.get('reps'), 'weight': e.get('weight')} for e in exercises], ensure_ascii=False) if exercises else '无',
+            current_plan_text=json.dumps([{'name': e['name'], 'sets': e.get('sets'), 'reps': e.get('reps'), 'weight': e.get('weight')} for e in exercises], ensure_ascii=False) if exercises else '暂无训练动作',
             user_input=user_input,
         )
     elif intent == "diet_log":
         sys_prompt = RESPONSE_DIET_SYSTEM
         ctx = _build_prompt_context(
-            agent_instruction="请确认本次饮食记录并给出简明专业建议。",
+            agent_instruction="请确认本次饮食记录，并给出简明专业建议。",
             user_profile=user_profile,
             mem0_context=mem0_context,
             recent_events=recent_events,
@@ -828,7 +813,7 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     else:
         sys_prompt = RESPONSE_CHAT_SYSTEM
         ctx = _build_prompt_context(
-            agent_instruction="请优先根据近期训练事实回答用户的问题，特别注意相对日期（今天/昨天）要映射到真实日期后再作答。",
+            agent_instruction="请优先根据近期训练事实回答用户问题，特别注意今天/昨天这类相对日期要映射到真实日期后再作答。",
             user_profile=user_profile,
             mem0_context=mem0_context,
             recent_events=recent_events,
@@ -849,17 +834,17 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     ) as span:
         resp = await _safe_llm_structured(
             system_prompt=sys_prompt, user_prompt=ctx, temperature=0.7, max_tokens=512,
-            fallback={"final_response": "已为您准备好！"},
+            fallback={"final_response": "已为您准备好。"},
             user_id=user_id, db=db, session_id=state.get("session_id"),
             langfuse_parent=span.observation,
         )
-        final_response = resp.get("final_response", "已为您准备好！")
+        final_response = resp.get("final_response", "已为您准备好。")
 
         use_sheet = state.get("use_training_sheet", False)
         ui = None
         if use_sheet and intent == "training_plan":
             if not exercises:
-                exercises = [{"name": "全身关节活动与动态拉伸", "sets": 3, "reps": "12", "weight": "自重", "notes": "安全热身，唤醒全身体征"}]
+                exercises = [{"name": "全身关节活动与动态拉伸", "sets": 3, "reps": "12", "weight": "自重", "notes": "安全热身，唤醒全身状态"}]
             import uuid
             ui = {
                 "type": "workout_card",
@@ -882,9 +867,7 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     return {"final_response": final_response, "ui_components": ui, "route": "end"}
 
 
-# ═══════════════════════════════════════════════════════════════
 # Build the StateGraph
-# ═══════════════════════════════════════════════════════════════
 workflow = StateGraph(AgentState)
 
 workflow.add_node("intent_classifier", intent_classifier_node)
@@ -900,8 +883,8 @@ workflow.set_entry_point("intent_classifier")
 
 
 def route_intent(state: AgentState) -> str:
-    # 所有意图都先走 profile_retrieval，确保 AI 回复时能读取到训练历史、近期事件等数据
-    # （之前 chat 意图直接跳到 response_builder，导致 AI 看不到训练完成记录）
+    # 鎵€鏈夋剰鍥鹃兘鍏堣蛋 profile_retrieval锛岀‘淇?AI 鍥炲鏃惰兘璇诲彇鍒拌缁冨巻鍙层€佽繎鏈熶簨浠剁瓑鏁版嵁
+    # 锛堜箣鍓?chat 鎰忓浘鐩存帴璺冲埌 response_builder锛屽鑷?AI 鐪嬩笉鍒拌缁冨畬鎴愯褰曪級
     return "profile_retrieval"
 
 
@@ -910,9 +893,8 @@ workflow.add_conditional_edges("intent_classifier", route_intent, {
 })
 
 def route_after_profile(state: AgentState) -> str:
-    """profile_retrieval 完成后，根据意图决定下一个节点。
-    - training_plan → planner（生成训练计划流程）
-    - 其他意图（chat/diet_log/profile_update）→ response_builder（直接生成回复）
+    """profile_retrieval 瀹屾垚鍚庯紝鏍规嵁鎰忓浘鍐冲畾涓嬩竴涓妭鐐广€?    - training_plan 鈫?planner锛堢敓鎴愯缁冭鍒掓祦绋嬶級
+    - 鍏朵粬鎰忓浘锛坈hat/diet_log/profile_update锛夆啋 response_builder锛堢洿鎺ョ敓鎴愬洖澶嶏級
     """
     if state.get("intent") == "training_plan":
         return "planner"
@@ -955,3 +937,5 @@ workflow.add_edge("corrector", "executor")
 workflow.add_edge("response_builder", END)
 
 app_workflow = workflow.compile()
+
+

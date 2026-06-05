@@ -7,8 +7,29 @@ from sqlalchemy import desc, select
 from app.database.models import Events
 from app.database.session import AsyncSessionLocal
 from app.main import app
+from app.api.workout import summarize_completion
 
 client = TestClient(app)
+
+
+def test_summarize_completion_supports_nested_progress_shape():
+    plan_json = {
+        "exercises": [
+            {"name": "A", "sets": 3},
+            {"name": "B", "sets": 2},
+        ]
+    }
+    completion = {
+        "0": {"0": True, "1": True, "2": False},
+        "1": {"0": True, "1": False},
+    }
+
+    summary = summarize_completion(plan_json, completion)
+
+    assert summary["total_sets"] == 5
+    assert summary["completed_sets"] == 3
+    assert summary["completed_keys"] == []
+    assert summary["completion_rate"] == 0.6
 
 
 @pytest.mark.anyio

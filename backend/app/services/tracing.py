@@ -1,31 +1,7 @@
-"""
-VolShape Langfuse Tracing 工具
-==============================
-使用 langfuse_context (observe 模式) 实现全链路追踪。
-
-核心原理：
-  langfuse.openai 的 patched AsyncOpenAI 会自动读取 langfuse_context 中的
-  当前 observation，并将 LLM Generation 嵌套到该 observation 下。
-  因此只要在每个节点中正确调用 langfuse_context.update_current_observation()，
-  就能自动实现：
-
-  Trace: volshape_chat_quick
-    ├── Span: intent_classifier
-    │     └── Generation: deepseek-chat
-    ├── Span: profile_retrieval
-    ├── Span: planner
-    │     └── Generation: deepseek-chat
-    └── Span: quick_combined
-          └── Generation: deepseek-chat
-
-关键：使用 langfuse_context.update_current_trace() 来绑定 trace_id，
-      使 langfuse.openai 的 auto-tracing 自动嵌套到我们的 trace 下。
-"""
 from __future__ import annotations
 
 import time
-import uuid
-from contextlib import contextmanager
+from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 
 from app.core.config import settings
@@ -40,27 +16,21 @@ def _is_langfuse_enabled() -> bool:
     )
 
 
-# ── 单例 Langfuse 客户端 ────────────────────────────────────────
-_langfuse_client = None
-
-
+@lru_cache(maxsize=1)
 def get_langfuse_client():
-    """获取 Langfuse 客户端单例实例"""
-    global _langfuse_client
-    if _langfuse_client is not None:
-        return _langfuse_client
+    """Return a cached Langfuse client when tracing is configured."""
     if not _is_langfuse_enabled():
         return None
     try:
         from langfuse import Langfuse
-        _langfuse_client = Langfuse(
+
+        return Langfuse(
             public_key=settings.LANGFUSE_PUBLIC_KEY,
             secret_key=settings.LANGFUSE_SECRET_KEY,
             host=settings.LANGFUSE_HOST,
         )
-        return _langfuse_client
-    except Exception as e:
-        print(f"[Langfuse] Failed to create client: {e}")
+    except Exception as exc:
+        print(f"[Langfuse] Failed to create client: {exc}")
         return None
 
 
@@ -70,10 +40,7 @@ def create_trace(
     mode: str,
     user_input: str,
 ) -> Tuple[Optional[Any], Optional[str]]:
-    """
-    在一次对话入口处创建顶级 Trace。
-    返回 (trace, trace_id)，Langfuse 未配置时均为 None。
-    """
+    """Create the root trace/span for a chat request."""
     lf = get_langfuse_client()
     if lf is None:
         return None, None
@@ -86,13 +53,13 @@ def create_trace(
             metadata={"mode": mode, "session_id": session_id, "user_id": user_id},
         )
         return trace, getattr(trace, "trace_id", None) or getattr(trace, "id", None)
-    except Exception as e:
-        print(f"[Langfuse] create_trace failed: {e}")
+    except Exception as exc:
+        print(f"[Langfuse] create_trace failed: {exc}")
         return None, None
 
 
 def finish_trace(trace: Optional[Any], final_response: str, intent: str = "", metadata: dict | None = None):
-    """在对话结束时更新顶级 Trace 的 output 字段并 flush"""
+    """Finalize the root trace/span and flush pending events."""
     if trace is None:
         return
     try:
@@ -102,22 +69,12 @@ def finish_trace(trace: Optional[Any], final_response: str, intent: str = "", me
         lf = get_langfuse_client()
         if lf:
             lf.flush()
-    except Exception as e:
-        print(f"[Langfuse] finish_trace failed: {e}")
+    except Exception as exc:
+        print(f"[Langfuse] finish_trace failed: {exc}")
 
 
 class NodeSpan:
-    """
-    在一个 LangGraph 节点内使用的 Span 上下文管理器。
-    
-    核心改进：将 span 对象传递给 langfuse.openai 作为 parent，
-    使 LLM Generation 自动嵌套在节点 span 下。
-
-    用法:
-        with NodeSpan(trace, "intent_classifier", input_data={...}) as span:
-            result = await _safe_llm_structured(..., langfuse_parent=span.observation)
-            span.set_output(result)
-    """
+    """Small context manager for nested workflow spans."""
 
     def __init__(
         self,
@@ -130,13 +87,12 @@ class NodeSpan:
         self._node_name = node_name
         self._input_data = input_data or {}
         self._metadata = metadata or {}
-        self._span = None  # StatefulSpanClient
+        self._span = None
         self._start = time.perf_counter()
         self._output: Optional[Dict[str, Any]] = None
 
     @property
     def observation(self):
-        """返回可作为 langfuse_parent 传给 langfuse.openai 的 span 对象"""
         return self._span
 
     def __enter__(self):
@@ -148,16 +104,14 @@ class NodeSpan:
                     input=self._input_data,
                     metadata=self._metadata,
                 )
-            except Exception as e:
-                print(f"[Langfuse] span({self._node_name}) start failed: {e}")
+            except Exception as exc:
+                print(f"[Langfuse] span({self._node_name}) start failed: {exc}")
         return self
 
     def set_output(self, output: Dict[str, Any]):
-        """在 with 块内调用，设置该节点的输出数据"""
         self._output = output
 
     def set_error(self, error: str):
-        """在 with 块内调用，标记该节点为错误状态"""
         self._output = {"error": error}
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -171,11 +125,10 @@ class NodeSpan:
             else:
                 self._span.update(output=self._output or {}, metadata={**self._metadata, "latency_ms": latency_ms})
                 self._span.end()
-        except Exception as e:
-            print(f"[Langfuse] span({self._node_name}) end failed: {e}")
-        return False  # 不吞掉异常
+        except Exception as exc:
+            print(f"[Langfuse] span({self._node_name}) end failed: {exc}")
+        return False
 
 
 def get_trace_from_config(config: Dict[str, Any]) -> Optional[Any]:
-    """从 LangGraph RunnableConfig 的 configurable 中取出 langfuse_trace 对象"""
     return config.get("configurable", {}).get("langfuse_trace")

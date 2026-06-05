@@ -1,67 +1,92 @@
 import datetime
+
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.database.models import Events
+
+
+def _session_load(payload: dict) -> float:
+    duration = float(payload.get("duration_minutes", 45) or 45)
+    rpe = float(payload.get("rpe", 7) or 7)
+    return duration * rpe
+
 
 async def calculate_acwr(
     user_id: str,
     new_session_duration: int,
     new_session_rpe: int,
-    db: AsyncSession
+    db: AsyncSession,
 ) -> dict:
     """
-    急性与慢性负荷比值 (Acute-to-Chronic Workload Ratio, ACWR) 损伤预防计算模型。
-    急性负荷 (Acute Load): 过去 7 天内所有训练的（负荷 = RPE * 运动时长）总和。
-    慢性负荷 (Chronic Load): 过去 28 天内所有训练（4周）的日均/周均负荷总和。
-    安全区间: 0.8 - 1.3
-    高风险警戒区间: > 1.5 (运动医学证实该区间损伤风险成倍增高，Evaluator 智能体必须进行阻断/重写计划)
+    Calculate ACWR (Acute:Chronic Workload Ratio) for the proposed session.
+
+    We deliberately avoid inventing a chronic baseline when historical data is
+    too sparse. In that case we return `risk="insufficient_history"` so the
+    evaluator can be explicit about the uncertainty instead of presenting a
+    misleading score.
     """
+
     today = datetime.date.today()
     acute_start = today - datetime.timedelta(days=7)
     chronic_start = today - datetime.timedelta(days=28)
 
-    # 1. 查询过去 28 天内的所有训练明细事件
     stmt = select(Events).where(
         Events.user_id == user_id,
         Events.event_type == "training",
         Events.event_date >= chronic_start,
-        Events.event_date <= today
+        Events.event_date <= today,
     )
     result = await db.execute(stmt)
     training_events = result.scalars().all()
 
-    # 2. 统计负荷 (Load = duration * rpe)
-    # 模拟默认无训练时提供基础小基数负荷以防止除以零
-    acute_load_sum = new_session_duration * new_session_rpe
-    chronic_load_sum = 100.0  # 基础慢性底数 load
+    acute_load_sum = float(new_session_duration) * float(new_session_rpe)
+    chronic_load_sum = 0.0
 
+    distinct_dates = set()
     for event in training_events:
         payload = event.payload or {}
-        duration = payload.get("duration_minutes", 45)
-        rpe = payload.get("rpe", 7)
-        load = duration * rpe
-        
+        load = _session_load(payload)
+        chronic_load_sum += load
+        distinct_dates.add(event.event_date)
+
         if event.event_date >= acute_start:
             acute_load_sum += load
-        
-        chronic_load_sum += load
 
-    # 3. 计算比值：急性负荷 / (慢性负荷 / 4周)
-    # 将 28 天平均到 4 周进行计算
+    history_days = 0
+    if distinct_dates:
+        history_days = (today - min(distinct_dates)).days + 1
+
+    has_enough_history = len(training_events) >= 4 and history_days >= 14 and chronic_load_sum > 0
+    if not has_enough_history:
+        return {
+            "acwr": None,
+            "risk": "insufficient_history",
+            "acute_load": round(acute_load_sum, 2),
+            "chronic_load": round(chronic_load_sum, 2),
+            "weekly_chronic_avg": None,
+            "history_days": history_days,
+            "training_sessions_28d": len(training_events),
+        }
+
     weekly_chronic_avg = chronic_load_sum / 4.0
-    acwr = round(acute_load_sum / weekly_chronic_avg, 2) if weekly_chronic_avg > 0 else 1.0
+    acwr = round(acute_load_sum / weekly_chronic_avg, 2) if weekly_chronic_avg > 0 else None
 
-    # 4. 判定伤病风险
-    if acwr > 1.5:
-        risk = "high"  # 极高损伤危险，必须拒绝计划
+    if acwr is None:
+        risk = "insufficient_history"
+    elif acwr > 1.5:
+        risk = "high"
     elif acwr > 1.3:
-        risk = "moderate"  # 中度负荷增加，应当警告
+        risk = "moderate"
     else:
-        risk = "safe"  # 绿灯安全，ACWR 在 0.8-1.3 最适甜美点
-        
+        risk = "safe"
+
     return {
         "acwr": acwr,
         "risk": risk,
-        "acute_load": acute_load_sum,
-        "chronic_load": chronic_load_sum
+        "acute_load": round(acute_load_sum, 2),
+        "chronic_load": round(chronic_load_sum, 2),
+        "weekly_chronic_avg": round(weekly_chronic_avg, 2),
+        "history_days": history_days,
+        "training_sessions_28d": len(training_events),
     }

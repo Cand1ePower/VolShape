@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import datetime
 import json
 import math
@@ -19,12 +19,15 @@ from app.services.llm_client import llm_call, llm_call_messages_structured, llm_
 
 
 MEDIA_INTENT_SYSTEM = """
-你是 VolShape 的媒体意图门控器。只有当用户上传了对应媒体，并且在文字中明确表达了要分析这份媒体时，才允许触发对应能力。
+你是 VolShape 的媒体意图门控器。只有当用户上传了对应媒体，并且在文字里明确表达了分析诉求时，才允许触发对应能力。
+
 能力定义：
-- nutrition_photo: 用户上传的是食物照片，并明确想知道热量、蛋白质、碳水、脂肪、营养构成、饮食建议
-- movement_video: 用户上传的是训练视频，并明确想分析姿势、动作质量、动作是否正确、改进建议
-如果用户只是上传了媒体，但没有明确说明分析诉求，必须拒绝触发。
-输出 JSON:
+- nutrition_photo: 用户上传的是食物照片，并明确想知道热量、蛋白质、碳水、脂肪、营养结构或饮食建议
+- movement_video: 用户上传的是训练视频，并明确想分析姿势、动作质量、是否标准或纠正建议
+
+如果用户只是上传了媒体，但没有说明分析诉求，必须拒绝触发。
+
+输出 JSON：
 {
   "should_invoke": true,
   "capability": "nutrition_photo" | "movement_video" | "none",
@@ -33,7 +36,8 @@ MEDIA_INTENT_SYSTEM = """
 """
 
 FOOD_IMAGE_ANALYSIS_SYSTEM = """
-你是专业营养识别助手。请结合用户上传的食物照片和用户文字，识别食物并估计份量。
+你是专业营养识别助手。请结合用户上传的食物照片和文字说明，识别食物并估计份量。
+
 严格输出 JSON：
 {
   "meal_type": "breakfast" | "lunch" | "dinner" | "snack",
@@ -54,37 +58,41 @@ FOOD_IMAGE_ANALYSIS_SYSTEM = """
     }
   ]
 }
+
 要求：
 - 食物名称尽量返回便于营养数据库检索的通用名称
-- 如果看不清，请降低 confidence，不要胡编很多项
+- 如果看不清，请降低 confidence，不要编造过多项目
 - 最多返回 5 个主要食物
-- 如果用户已经明确说了分量，可把 portion_basis 设为 explicit_prompt，requires_confirmation 设为 false
+- 如果用户已经明确说了分量，可将 portion_basis 设为 explicit_prompt，requires_confirmation 设为 false
 - 如果食物通常以固定单位出现，例如整颗鸡蛋、独立包装酸奶，可使用 standard_unit
 - portion_options_g 必须给出 2 到 4 个候选克重，便于用户确认
 """
-
 FOOD_RESPONSE_SYSTEM = """
-你是 VolShape 的专业营养教练。根据识别结果和营养汇总，给用户一段专业、自然、略详细的反馈。
-输出只需自然语言，不要 JSON。
-要点：
-- 先说明你根据图片做了估算，存在少量误差
+你是 VolShape 的专业营养教练。请根据识别结果和营养汇总，给用户一段专业、自然、略详细的反馈。
+
+只输出自然语言，不要输出 JSON。
+
+要求：
+- 先说明你是基于图片做的估算，存在少量误差
 - 明确提到总热量、蛋白质、碳水、脂肪
-- 结合用户这次的提问给 2-3 条具体建议
-- 语气专业，不要口语化兄弟风
+- 结合用户这次的问题给出 2 到 3 条具体建议
+- 语气专业，不要口语化
 """
 
 MOVEMENT_RESPONSE_SYSTEM = """
-你是 VolShape 的动作技术教练。根据姿态检测得到的结构化问题，给用户一段专业、自然、略详细的反馈。
-输出只需自然语言，不要 JSON。
-要点：
+你是 VolShape 的动作技术教练。请根据姿态检测得到的结构化问题，给用户一段专业、自然、略详细的反馈。
+
+只输出自然语言，不要输出 JSON。
+
+要求：
 - 先总结整体动作质量
-- 再列出最重要的 2-4 个问题
+- 再列出最重要的 2 到 4 个问题
 - 给出可执行的纠正建议
 - 如果检测质量一般，要坦诚说明视频角度或清晰度可能影响判断
 """
 
 PORTION_EXPLICIT_PATTERN = re.compile(
-    r"(\d+\s?(g|kg|克|千克|公斤|ml|毫升|斤|两|碗|份|个|颗|片|块|勺|盒|瓶|罐|杯))",
+    r"(\d+\s?(g|kg|克|千克|公斤|ml|毫升|个|份|碗|盘|杯|勺|块|片|串|盒))",
     re.IGNORECASE,
 )
 
@@ -173,7 +181,7 @@ def needs_portion_confirmation(user_input: str, items: List[Dict[str, Any]]) -> 
 
 def fallback_media_gate(user_input: str, media_kind: str) -> Dict[str, Any]:
     if media_kind == "image":
-        keywords = ["热量", "卡路里", "蛋白质", "碳水", "脂肪", "营养", "早饭", "午饭", "晚饭", "加餐", "吃的"]
+        keywords = ["热量", "卡路里", "蛋白质", "碳水", "脂肪", "营养", "早餐", "午饭", "晚饭", "加餐", "吃的"]
         if any(word in user_input for word in keywords):
             return {"should_invoke": True, "capability": "nutrition_photo", "message": "已识别为食物图片营养分析请求。"}
     if media_kind == "video":
@@ -204,6 +212,7 @@ async def classify_media_intent(
             user_id=user_id,
             db=db,
             session_id=session_id,
+            trace_enabled=False,
         )
         should_invoke = bool(result.get("should_invoke"))
         capability = result.get("capability") or "none"
@@ -279,8 +288,8 @@ def _draft_items_from_vision_result(result: Dict[str, Any]) -> List[Dict[str, An
     for item in llm_items[:5]:
         if not isinstance(item, dict):
             continue
-        name = str(item.get("name") or "").strip() or str(item.get("display_name") or "未知食物").strip()
-        display_name = str(item.get("display_name") or name or "未知食物").strip()
+        name = str(item.get("name") or "").strip() or str(item.get("display_name") or "鏈煡椋熺墿").strip()
+        display_name = str(item.get("display_name") or name or "鏈煡椋熺墿").strip()
         estimated_weight = float(item.get("estimated_weight_g") or 0) or 100.0
         portion_options = item.get("portion_options_g") if isinstance(item.get("portion_options_g"), list) else []
         cleaned_options = [max(20, int(option)) for option in portion_options if isinstance(option, (int, float))]
@@ -313,7 +322,7 @@ async def _normalize_food_items(draft_items: List[Dict[str, Any]]) -> List[Dict[
 
     for item in draft_items:
         name = str(item.get("name") or "").strip()
-        display_name = str(item.get("display_name") or name or "未知食物").strip()
+        display_name = str(item.get("display_name") or name or "鏈煡椋熺墿").strip()
         selected_weight = float(item.get("selected_weight_g") or 0) or 100.0
         base_weight = float(item.get("selected_weight_g") or selected_weight or 100.0)
         fallback_macros = {
@@ -503,7 +512,7 @@ async def analyze_food_image(
     if needs_portion_confirmation(user_input, draft_items):
         return {
             "capability": "nutrition_photo",
-            "final_response": "我已经先识别出这顿饭的大致构成了，但这次的分量还不够稳。你先在下方确认每样食物的大致重量，我再给你更可靠的热量和三大营养素估算。",
+            "final_response": "我已经先识别出这顿饭的大致构成了，但这次的分量还不够确定。你先在下方确认每样食物的大致重量，我再给你更可靠的热量和三大营养素估算。",
             "card": {
                 "type": "portion_confirm_card",
                 "mealType": meal_type if meal_type in {"breakfast", "lunch", "dinner", "snack"} else "snack",
@@ -550,7 +559,7 @@ async def confirm_food_portions(
         sanitized_items.append(
             {
                 "name": str(item.get("name") or "").strip(),
-                "display_name": str(item.get("display_name") or item.get("name") or "未知食物").strip(),
+                "display_name": str(item.get("display_name") or item.get("name") or "鏈煡椋熺墿").strip(),
                 "selected_weight_g": selected_weight,
                 "estimated_calories": round(float(item.get("estimated_calories") or 0)),
                 "estimated_protein": round(float(item.get("estimated_protein") or 0), 1),
@@ -637,24 +646,24 @@ def _analyze_pose_frames(video_bytes: bytes) -> Dict[str, Any]:
             pass
 
     if observed_frames == 0:
-        raise RuntimeError("视频帧读取失败，暂时无法分析动作")
+        raise RuntimeError("视频帧读取失败，暂时无法分析动作。")
 
     detection_ratio = valid_frames / observed_frames if observed_frames else 0.0
     score = 88
     if detection_ratio < 0.45:
-        issues.append("视频角度或清晰度一般，姿态识别有效帧偏少")
+        issues.append("视频角度或清晰度一般，姿态识别的有效帧偏少。")
         score -= 12
     if shoulder_imbalance > 0.06:
-        issues.append("双肩存在明显高低差，动作过程中上半身不够稳定")
+        issues.append("双肩存在明显高低差，动作过程中上半身不够稳定。")
         score -= 10
     if hip_imbalance > 0.06:
-        issues.append("骨盆左右不够平稳，可能有重心偏移")
+        issues.append("骨盆左右不够平稳，可能存在重心偏移。")
         score -= 8
     if torso_offset > 0.08:
-        issues.append("躯干有明显侧移或倾斜，核心稳定性需要加强")
+        issues.append("躯干有明显侧移或倾斜，核心稳定性需要加强。")
         score -= 10
     if not issues:
-        issues.append("整体动作轨迹较稳定，没有识别到明显的大幅失衡")
+        issues.append("整体动作轨迹较稳定，没有识别到明显的大幅失衡。")
 
     return {
         "score": max(55, min(96, score)),
@@ -692,3 +701,5 @@ async def analyze_movement_video(
         "card": None,
         "structured_result": pose_result,
     }
+
+

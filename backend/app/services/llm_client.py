@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.services.errors import AppError, LLMEmptyResponseError, LLMGatewayError
 
 _AsyncOpenAI = None
+_VanillaAsyncOpenAI = None
 _clients: Dict[str, Any] = {}
 
 RESPONSE_STYLE_GUIDANCE = """
@@ -34,8 +35,16 @@ RESPONSE_STYLE_GUIDANCE = """
 """
 
 
-def _get_async_openai_class():
-    global _AsyncOpenAI
+def _get_async_openai_class(trace_enabled: bool = True):
+    global _AsyncOpenAI, _VanillaAsyncOpenAI
+
+    if not trace_enabled:
+        if _VanillaAsyncOpenAI is None:
+            from openai import AsyncOpenAI as VanillaAsyncOpenAI
+
+            _VanillaAsyncOpenAI = VanillaAsyncOpenAI
+        return _VanillaAsyncOpenAI
+
     if _AsyncOpenAI is not None:
         return _AsyncOpenAI
 
@@ -52,15 +61,21 @@ def _get_async_openai_class():
     from openai import AsyncOpenAI as VanillaAsyncOpenAI
 
     _AsyncOpenAI = VanillaAsyncOpenAI
+    _VanillaAsyncOpenAI = VanillaAsyncOpenAI
     return _AsyncOpenAI
 
 
-def get_openai_client(api_key: Optional[str] = None, base_url: Optional[str] = None):
+def get_openai_client(
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+    *,
+    trace_enabled: bool = True,
+):
     key = api_key or settings.DEEPSEEK_API_KEY
     url = base_url or settings.DEEPSEEK_BASE_URL
-    cache_key = f"{url}|{key[-8:] if key else ''}"
+    cache_key = f"{url}|{key[-8:] if key else ''}|{'trace' if trace_enabled else 'plain'}"
     if cache_key not in _clients:
-        cls = _get_async_openai_class()
+        cls = _get_async_openai_class(trace_enabled=trace_enabled)
         _clients[cache_key] = cls(
             api_key=key,
             base_url=url,
@@ -88,6 +103,7 @@ async def _resolve_client_and_model(
     model: Optional[str],
     user_id: Optional[str],
     db: Optional[AsyncSession],
+    trace_enabled: bool = True,
 ):
     base_url = settings.DEEPSEEK_BASE_URL
     api_key = settings.DEEPSEEK_API_KEY
@@ -99,7 +115,7 @@ async def _resolve_client_and_model(
         api_key, newapi_token = await NewApiService.get_api_key_for_user(user_id, db)
         base_url = f"{settings.NEWAPI_BASE_URL.rstrip('/')}/v1"
 
-    client = get_openai_client(api_key=api_key, base_url=base_url)
+    client = get_openai_client(api_key=api_key, base_url=base_url, trace_enabled=trace_enabled)
     resolved_model = model or settings.LLM_LIGHT_MODEL
     return client, resolved_model, newapi_token
 
@@ -148,8 +164,14 @@ async def llm_call_messages(
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
     langfuse_parent: Optional[Any] = None,
+    trace_enabled: bool = True,
 ) -> str:
-    client, resolved_model, newapi_token = await _resolve_client_and_model(model=model, user_id=user_id, db=db)
+    client, resolved_model, newapi_token = await _resolve_client_and_model(
+        model=model,
+        user_id=user_id,
+        db=db,
+        trace_enabled=trace_enabled,
+    )
 
     kwargs: Dict[str, Any] = {
         "model": resolved_model,
@@ -220,6 +242,7 @@ async def llm_call(
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
     langfuse_parent: Optional[Any] = None,
+    trace_enabled: bool = True,
 ) -> str:
     del trace_name
     return await llm_call_messages(
@@ -235,6 +258,7 @@ async def llm_call(
         db=db,
         session_id=session_id,
         langfuse_parent=langfuse_parent,
+        trace_enabled=trace_enabled,
     )
 
 
@@ -248,6 +272,7 @@ async def llm_call_structured(
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
     langfuse_parent: Optional[Any] = None,
+    trace_enabled: bool = True,
 ) -> Dict[str, Any]:
     text = await llm_call(
         system_prompt=system_prompt,
@@ -261,6 +286,7 @@ async def llm_call_structured(
         db=db,
         session_id=session_id,
         langfuse_parent=langfuse_parent,
+        trace_enabled=trace_enabled,
     )
     try:
         return json.loads(text)
@@ -280,6 +306,7 @@ async def llm_call_messages_structured(
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
     langfuse_parent: Optional[Any] = None,
+    trace_enabled: bool = True,
 ) -> Dict[str, Any]:
     text = await llm_call_messages(
         messages=messages,
@@ -291,6 +318,7 @@ async def llm_call_messages_structured(
         db=db,
         session_id=session_id,
         langfuse_parent=langfuse_parent,
+        trace_enabled=trace_enabled,
     )
     try:
         return json.loads(text)

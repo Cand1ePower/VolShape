@@ -12,12 +12,18 @@ Last updated: 2026-06-05
 - [x] Add `/health` endpoint for service health checks
 - [x] Add a defensive `UserProfile` upsert in the chat message persistence path
 
-## P1 Next
+## P1 Completed
 
-- [ ] Rework ACWR when history is insufficient instead of hardcoding a chronic baseline
-- [ ] Add focused tests for ACWR, nutrition scaling/parsing, and completion summarization
-- [ ] Clean up remaining encoding/mojibake issues in user-facing/backend prompt text
-- [ ] Verify Langfuse trace hierarchy and reduce redundant traces
+- [x] Rework ACWR when history is insufficient instead of hardcoding a chronic baseline
+- [x] Add focused tests for ACWR, nutrition scaling/parsing, and completion summarization
+- [x] Clean up critical mojibake in user-facing/backend prompt text and media-analysis feedback
+- [x] Reduce redundant Langfuse traces for internal memory/media helper calls
+
+## P1 Follow-up
+
+- [ ] Replace remaining `datetime.utcnow()` calls with timezone-aware UTC helpers
+- [ ] Continue cleaning non-user-facing mojibake in legacy comments/docstrings
+- [ ] Re-check Langfuse production traces after the next real mobile session
 
 ## P2 Architecture
 

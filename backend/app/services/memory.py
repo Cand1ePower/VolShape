@@ -103,6 +103,7 @@ async def _llm_extract_memory(user_input: str, user_id: str, db: AsyncSession) -
         max_tokens=700,
         user_id=user_id,
         db=db,
+        trace_enabled=False,
     )
     extracted = result.get("extracted", [])
     return extracted if isinstance(extracted, list) else []
@@ -448,6 +449,7 @@ class MemoryService:
                 max_tokens=1024,
                 user_id=user_id,
                 db=db,
+                trace_enabled=False,
             )
             prune_ids = resp.get("prune_event_ids", [])
             valid_ids = [event.id for event in events]

@@ -1,6 +1,6 @@
 # VolShape Ubuntu Demo Deployment
 
-目标：把 VolShape 部署到 Ubuntu 服务器，提供 HTTPS 后端 API、静态演示页、API 文档入口，以及可下载的 Android APK。
+目标：把 VolShape 部署到 Ubuntu 服务器，使用 Docker Compose 提供后端 API、PostgreSQL、Redis、静态演示页、API 文档入口，以及可下载的 Android APK。
 
 ## 当前结论
 
@@ -51,14 +51,21 @@ git clone <your-repo-url> .
 /opt/volshape/deploy
 ```
 
-## 数据库与 Redis
+## Docker Compose 一键部署
+
+生产部署优先使用 Docker Compose：
 
 ```bash
-cd /opt/volshape/backend
-docker compose up -d db redis
+cd /opt/volshape/deploy
+docker compose -f docker-compose.prod.yml --env-file ../backend/.env up -d --build
 ```
 
-生产环境建议修改 `backend/docker-compose.yml` 中 PostgreSQL 密码，并同步到 `.env`。
+服务包括：
+
+- `db`: PostgreSQL 16 + pgvector
+- `redis`: Redis 7
+- `backend`: FastAPI + Alembic 自动迁移
+- `nginx`: 静态演示页、APK 下载、API 反代、SSE 透传
 
 ## 后端环境变量
 
@@ -91,25 +98,26 @@ LANGFUSE_HOST=https://cloud.langfuse.com
 openssl rand -hex 32
 ```
 
-## 安装后端依赖
+## 手动安装后端依赖
 
-```bash
-cd /opt/volshape/backend
-python3 -m venv .venv
-. .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-```
+仅当不使用 Docker 时才需要手动安装 Python 依赖。
 
-初始化数据库：
+Docker 后端容器启动时会执行：
 
 ```bash
 alembic upgrade head
 ```
 
-如果迁移失败，可临时启动一次后端让 `init_db()` 创建表，但正式环境以 Alembic 为准。
+如果迁移失败，可查看后端容器日志：
+
+```bash
+cd /opt/volshape/deploy
+docker compose -f docker-compose.prod.yml logs -f backend
+```
 
 ## systemd 后端服务
+
+仅当不使用 Docker 后端容器时使用：
 
 ```bash
 sudo cp /opt/volshape/deploy/systemd/volshape-backend.service /etc/systemd/system/
@@ -182,7 +190,7 @@ https://volshape.candlepower.cool/downloads/VolShape-preview.apk
 后端：
 
 ```bash
-curl https://volshape.candlepower.cool/api/health
+curl https://volshape.candlepower.cool/health
 ```
 
 评测：

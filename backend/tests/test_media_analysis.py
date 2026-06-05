@@ -28,7 +28,7 @@ async def test_fallback_media_gate_requires_explicit_media_intent(anyio_backend)
     assert image_gate["should_invoke"] is True
     assert image_gate["capability"] == "nutrition_photo"
 
-    video_gate = fallback_media_gate("帮我分析一下这个动作姿势是否正确", "video")
+    video_gate = fallback_media_gate("帮我分析一下这个动作姿势对不对", "video")
     assert video_gate["should_invoke"] is True
     assert video_gate["capability"] == "movement_video"
 
@@ -74,3 +74,40 @@ async def test_media_endpoint_rejects_non_expert_mode(anyio_backend):
         data={"user_input": "这是我今天的午饭，大概多少热量？", "mode": "quick"},
     )
     assert response.status_code == 403
+
+
+async def test_media_endpoint_rejects_oversized_upload(anyio_backend):
+    from app.api import media as media_api
+    from app.core.config import settings
+
+    previous_limit = settings.MAX_IMAGE_UPLOAD_MB
+    settings.MAX_IMAGE_UPLOAD_MB = 1
+
+    async def fake_classify_media_intent(*args, **kwargs):
+        return {"should_invoke": True, "capability": "nutrition_photo", "message": ""}
+
+    async def fake_assert_can_chat(*args, **kwargs):
+        return None
+
+    async def fake_increment_message(*args, **kwargs):
+        return None
+
+    original_classifier = media_api.classify_media_intent
+    original_assert = media_api.QuotaService.assert_can_chat
+    original_increment = media_api.QuotaService.increment_message
+    media_api.classify_media_intent = fake_classify_media_intent
+    media_api.QuotaService.assert_can_chat = fake_assert_can_chat
+    media_api.QuotaService.increment_message = fake_increment_message
+    try:
+        response = client.post(
+            "/api/media/analyze",
+            headers={"Authorization": "Bearer test-user-media-gate"},
+            files={"file": ("meal.jpg", b"x" * (1024 * 1024 + 1), "image/jpeg")},
+            data={"user_input": "这是我今天的晚饭，大概多少热量和蛋白质？", "mode": "detailed"},
+        )
+        assert response.status_code == 413
+    finally:
+        media_api.classify_media_intent = original_classifier
+        media_api.QuotaService.assert_can_chat = original_assert
+        media_api.QuotaService.increment_message = original_increment
+        settings.MAX_IMAGE_UPLOAD_MB = previous_limit

@@ -1,15 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
+
 from app.api.chat import router as chat_router
 from app.api.auth import router as auth_router
 from app.api.diet import router as diet_router
 from app.api.media import router as media_router
 from app.api.payment import router as payment_router
 from app.api.workout import router as workout_router
+from app.core.config import settings
 from app.database.session import init_db
 from app.services.newapi import ensure_quota_policies
 from app.database.session import AsyncSessionLocal
 from contextlib import asynccontextmanager
+from app.services.tracing import get_langfuse_client
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -31,10 +35,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# 允许跨域（本地 RN 与 Expo 开发需要）
+allowed_origins = [origin.strip() for origin in settings.CORS_ORIGINS.split(",") if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -55,3 +60,26 @@ async def read_root():
         "app": "VolShape Backend Service",
         "version": "1.0.0"
     }
+
+
+@app.get("/health")
+async def health():
+    checks = {
+        "database": "error",
+        "langfuse": "disabled",
+    }
+
+    try:
+        async with AsyncSessionLocal() as session:
+            await session.execute(text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception:
+        checks["database"] = "error"
+
+    try:
+        checks["langfuse"] = "ok" if get_langfuse_client() else "disabled"
+    except Exception:
+        checks["langfuse"] = "error"
+
+    status = "healthy" if checks["database"] == "ok" and checks["langfuse"] in {"ok", "disabled"} else "degraded"
+    return {"status": status, "checks": checks}

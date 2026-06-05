@@ -10,9 +10,9 @@ from sqlalchemy import case, delete, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.auth import get_current_user_id
+from app.core.auth import ensure_user_profile, get_current_user_id
 from app.database.models import ConversationMessage, ConversationSession, Events
-from app.database.session import get_db
+from app.database.session import AsyncSessionLocal, get_db
 from app.graphs.workflow import app_workflow
 from app.services.errors import error_payload
 from app.services.memory import should_capture_long_term_memory
@@ -297,6 +297,8 @@ async def _save_message(
         stored_content = content
 
     created_at = datetime.datetime.utcnow()
+    await ensure_user_profile(user_id, db)
+    await db.flush()
     db.add(
         ConversationMessage(
             id=str(uuid.uuid4()),
@@ -317,7 +319,7 @@ async def _save_message(
     await db.commit()
 
 
-async def live_agent_stream(
+async def _live_agent_stream_with_db(
     user_input: str,
     user_id: str,
     mode: str,
@@ -390,9 +392,7 @@ async def live_agent_stream(
             count_res = await db.execute(count_stmt)
             msg_count = count_res.scalar() or 0
             if msg_count > 0 and msg_count % 20 == 0:
-                from app.services.memory import MemoryService
-
-                asyncio.create_task(MemoryService.prune_garbage_episodic_memory(user_id, db))
+                asyncio.create_task(_run_memory_gc_task(user_id))
                 print(f"[Memory GC Trigger] User {user_id} has reached {msg_count // 2} rounds.")
         except Exception as exc:
             print(f"[Memory GC Trigger Error] {exc}")
@@ -422,6 +422,32 @@ async def live_agent_stream(
         await _save_message(user_id, session_id, "assistant", f"⚠️ {payload['message']}", db)
         yield {"event": "error", "data": json.dumps(payload, ensure_ascii=False)}
         yield {"event": "done", "data": ""}
+
+
+async def _run_memory_gc_task(user_id: str) -> None:
+    from app.services.memory import MemoryService
+
+    async with AsyncSessionLocal() as db:
+        await MemoryService.prune_garbage_episodic_memory(user_id, db)
+
+
+async def live_agent_stream(
+    user_input: str,
+    user_id: str,
+    mode: str,
+    session_id: str,
+    use_training_sheet: bool = False,
+):
+    async with AsyncSessionLocal() as db:
+        async for event in _live_agent_stream_with_db(
+            user_input,
+            user_id,
+            mode,
+            session_id,
+            db,
+            use_training_sheet,
+        ):
+            yield event
 
 
 @router.get("/sessions")
@@ -513,7 +539,6 @@ async def chat_stream(
             user_id,
             request.mode or "quick",
             session_id,
-            db,
             request.use_training_sheet or False,
         ),
         media_type="text/event-stream",

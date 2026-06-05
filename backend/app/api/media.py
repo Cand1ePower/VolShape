@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.chat import _resolve_session_id, _save_message
 from app.core.auth import get_current_user_id
+from app.core.config import settings
 from app.database.session import get_db
 from app.services.media_analysis import (
     analyze_food_image,
@@ -15,6 +16,12 @@ from app.services.media_analysis import (
 from app.services.quota import QuotaService
 
 router = APIRouter()
+
+
+def _max_upload_bytes(media_kind: str) -> int:
+    if media_kind == "video":
+        return settings.MAX_VIDEO_UPLOAD_MB * 1024 * 1024
+    return settings.MAX_IMAGE_UPLOAD_MB * 1024 * 1024
 
 
 class PortionConfirmRequest(BaseModel):
@@ -52,6 +59,9 @@ async def analyze_media(
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="上传文件为空。")
+    if len(file_bytes) > _max_upload_bytes(media_kind):
+        max_mb = settings.MAX_VIDEO_UPLOAD_MB if media_kind == "video" else settings.MAX_IMAGE_UPLOAD_MB
+        raise HTTPException(status_code=413, detail=f"上传文件过大，当前{media_kind}最大支持 {max_mb}MB。")
 
     await _save_message(
         user_id,

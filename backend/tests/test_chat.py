@@ -23,6 +23,16 @@ async def test_read_root(anyio_backend):
 
 
 @pytest.mark.anyio
+async def test_health_endpoint(anyio_backend):
+    response = client.get("/health")
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] in {"healthy", "degraded"}
+    assert "database" in payload["checks"]
+    assert "langfuse" in payload["checks"]
+
+
+@pytest.mark.anyio
 async def test_auth_unauthorized(anyio_backend):
     response = client.post("/api/chat/stream", json={"user_input": "test"})
     assert response.status_code == 401

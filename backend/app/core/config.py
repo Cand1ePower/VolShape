@@ -22,6 +22,10 @@ class Settings:
     ENV: str = _env("ENV", "development")
     DATABASE_URL: str = _env("DATABASE_URL", "postgresql+asyncpg://postgres:localpassword123@localhost:5432/volshape")
     REDIS_URL: str = _env("REDIS_URL", "redis://localhost:6379/0")
+    CORS_ORIGINS: str = _env(
+        "CORS_ORIGINS",
+        "http://localhost:8081,http://127.0.0.1:8081,http://localhost:19006,http://127.0.0.1:19006",
+    )
     SUPABASE_JWT_SECRET: str = _env("SUPABASE_JWT_SECRET", "volshape-development-secret-key-32-chars-long!")
     AUTH_JWT_SECRET: str = _env("AUTH_JWT_SECRET", SUPABASE_JWT_SECRET)
     AUTH_ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("AUTH_ACCESS_TOKEN_EXPIRE_MINUTES", "15"))
@@ -65,6 +69,8 @@ class Settings:
     FATSECRET_CLIENT_SECRET: str = _env("FATSECRET_CLIENT_SECRET", "")
     FATSECRET_TOKEN_URL: str = _env("FATSECRET_TOKEN_URL", "https://oauth.fatsecret.com/connect/token")
     FATSECRET_API_BASE_URL: str = _env("FATSECRET_API_BASE_URL", "https://platform.fatsecret.com/rest/server.api")
+    MAX_IMAGE_UPLOAD_MB: int = int(os.getenv("MAX_IMAGE_UPLOAD_MB", "10"))
+    MAX_VIDEO_UPLOAD_MB: int = int(os.getenv("MAX_VIDEO_UPLOAD_MB", "50"))
 
     # Tavily Web Search
     TAVILY_API_KEY: str = _env("TAVILY_API_KEY", "")

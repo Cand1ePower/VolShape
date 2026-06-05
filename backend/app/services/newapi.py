@@ -65,6 +65,12 @@ def group_for_tier(tier: str) -> str:
     return settings.NEWAPI_DEFAULT_FREE_GROUP
 
 
+def _as_naive_utc(value: datetime.datetime) -> datetime.datetime:
+    if value.tzinfo is None:
+        return value
+    return value.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+
+
 async def ensure_quota_policies(db: AsyncSession) -> None:
     for tier, spec in DEFAULT_POLICIES.items():
         result = await db.execute(select(UserQuotaPolicy).where(UserQuotaPolicy.tier == tier))
@@ -79,7 +85,7 @@ async def get_user_tier(user_id: str, db: AsyncSession) -> str:
     sub = result.scalars().first()
     if not sub or sub.status not in ("trialing", "active"):
         return "free"
-    if sub.current_period_end and sub.current_period_end < utc_now():
+    if sub.current_period_end and _as_naive_utc(sub.current_period_end) < utc_now():
         sub.status = "expired"
         sub.updated_at = utc_now()
         await db.commit()

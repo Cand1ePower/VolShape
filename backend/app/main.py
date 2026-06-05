@@ -7,6 +7,8 @@ from app.api.auth import router as auth_router
 from app.api.diet import router as diet_router
 from app.api.media import router as media_router
 from app.api.payment import router as payment_router
+from app.api.sessions import router as sessions_router
+from app.api.user_insights import router as insights_router
 from app.api.workout import router as workout_router
 from app.core.config import settings
 from app.database.session import init_db
@@ -46,12 +48,14 @@ app.add_middleware(
 )
 
 # 注册 API 路由
-app.include_router(auth_router, prefix="/api/auth", tags=["auth"])
-app.include_router(chat_router, prefix="/api/chat", tags=["chat"])
-app.include_router(diet_router, prefix="/api/diet", tags=["diet"])
-app.include_router(media_router, prefix="/api/media", tags=["media"])
-app.include_router(payment_router, prefix="/api/payment", tags=["payment"])
-app.include_router(workout_router, prefix="/api/workout", tags=["workout"])
+app.include_router(auth_router,     prefix="/api/auth",  tags=["auth"])
+app.include_router(chat_router,     prefix="/api/chat",  tags=["chat"])
+app.include_router(sessions_router, prefix="/api/chat",  tags=["sessions"])
+app.include_router(insights_router, prefix="/api/chat",  tags=["insights"])
+app.include_router(diet_router,     prefix="/api/diet",  tags=["diet"])
+app.include_router(media_router,    prefix="/api/media", tags=["media"])
+app.include_router(payment_router,  prefix="/api/payment", tags=["payment"])
+app.include_router(workout_router,  prefix="/api/workout", tags=["workout"])
 
 @app.get("/")
 async def read_root():

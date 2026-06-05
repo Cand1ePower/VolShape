@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.chat import _resolve_session_id, _save_message
+from app.api.sessions import resolve_session_id as _resolve_session_id, save_message as _save_message
 from app.core.auth import get_current_user_id
 from app.core.config import settings
 from app.database.session import get_db

@@ -1,6 +1,5 @@
-import { getBackendBaseUrl } from '@/services/api';
+﻿import { getBackendBaseUrl } from '@/services/api';
 import { fetch as expoFetch } from 'expo/fetch';
-import { File } from 'expo-file-system';
 
 export interface AnalyzeMediaParams {
   token: string;
@@ -9,6 +8,7 @@ export interface AnalyzeMediaParams {
   mimeType: string;
   userInput: string;
   sessionId: string | null;
+  onProgress?: (progress: number) => void;
 }
 
 export interface AnalyzeMediaResult {
@@ -44,29 +44,54 @@ function buildMediaError(detail: unknown, status: number) {
   return '媒体解析失败，请稍后再试。';
 }
 
-export async function analyzeMedia(params: AnalyzeMediaParams): Promise<AnalyzeMediaResult> {
-  const formData = new FormData();
-  formData.append('user_input', params.userInput);
-  formData.append('mode', 'detailed');
-  if (params.sessionId) {
-    formData.append('session_id', params.sessionId);
-  }
-  const uploadFile = new File(params.uri);
-  formData.append('file', uploadFile, params.name);
+export function analyzeMedia(params: AnalyzeMediaParams): Promise<AnalyzeMediaResult> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const url = `${getBackendBaseUrl()}/api/media/analyze`;
 
-  const response = await expoFetch(`${getBackendBaseUrl()}/api/media/analyze`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${params.token}`,
-    },
-    body: formData,
+    xhr.open('POST', url, true);
+    xhr.setRequestHeader('Authorization', `Bearer ${params.token}`);
+
+    xhr.upload.onprogress = (event) => {
+      if (params.onProgress && event.lengthComputable) {
+        params.onProgress(event.loaded / event.total);
+      }
+    };
+
+    xhr.onload = () => {
+      let payload;
+      try {
+        payload = JSON.parse(xhr.responseText);
+      } catch (e) {
+        payload = {};
+      }
+
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(payload as AnalyzeMediaResult);
+      } else {
+        reject(new Error(buildMediaError(payload?.detail ?? payload, xhr.status)));
+      }
+    };
+
+    xhr.onerror = () => {
+      reject(new Error('网络请求失败'));
+    };
+
+    const formData = new FormData();
+    formData.append('file', {
+      uri: params.uri,
+      type: params.mimeType,
+      name: params.name || 'media',
+    } as any);
+    
+    formData.append('user_input', params.userInput);
+    formData.append('mode', 'detailed');
+    if (params.sessionId) {
+      formData.append('session_id', params.sessionId);
+    }
+
+    xhr.send(formData);
   });
-
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(buildMediaError(payload?.detail ?? payload, response.status));
-  }
-  return payload as AnalyzeMediaResult;
 }
 
 export async function confirmPortion(params: ConfirmPortionParams): Promise<AnalyzeMediaResult> {

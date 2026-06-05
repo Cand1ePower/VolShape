@@ -120,18 +120,13 @@ class MediaPipeAdapter(BaseAdapter):
 
     async def execute(self, payload: Dict[str, Any], **kwargs) -> Dict[str, Any]:
         import asyncio
-        import tempfile
 
         from app.services.media_analysis import _analyze_pose_frames
 
         video_bytes: bytes = payload["video_bytes"]
 
-        with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
-            tmp.write(video_bytes)
-            tmp_path = tmp.name
-
         loop = asyncio.get_event_loop()
-        pose_result = await loop.run_in_executor(None, _analyze_pose_frames, tmp_path)
+        pose_result = await loop.run_in_executor(None, _analyze_pose_frames, video_bytes)
         return {"success": True, "data": pose_result}
 
 

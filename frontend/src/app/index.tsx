@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -175,6 +175,8 @@ export default function ChatScreen() {
   const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
   const [portionSubmittingId, setPortionSubmittingId] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<MessageAttachment | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [isCompressing, setIsCompressing] = useState(false);
 
   const lastScrollY = useRef(0);
   const keyboardLift = useRef(new Animated.Value(0)).current;
@@ -586,7 +588,7 @@ export default function ChatScreen() {
   );
 
   const handleSend = useCallback(async () => {
-    if (isGenerating || !inputText.trim()) return;
+    if ((!inputText.trim() && !pendingAttachment) || isGenerating) return;
     if (!sessionId) {
       await refreshSessions();
       return;
@@ -607,125 +609,142 @@ export default function ChatScreen() {
         attachment: attachment || undefined,
       },
     ]);
-    setIsGenerating(true);
-    const initialStatus = { node: 'Intent Classifier', message: '正在分析用户意图...' };
-    setAgentStatus(initialStatus);
-    setProcessingMessage(formatProcessingMessage(initialStatus));
     scrollToBottom(true);
-
-    const botMessageId = Math.random().toString(36).slice(2);
-    setMessages((prev) => [...prev, { id: botMessageId, text: '', isBot: true, createdAt: new Date() }]);
-    currentBotTextRef.current = '';
 
     const validToken = await getValidToken();
     if (!validToken) {
-      setIsGenerating(false);
-      setAgentStatus(null);
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: '请先登录后再继续使用 AI 教练。' } : msg))
-      );
+      const botMessageId = Math.random().toString(36).slice(2);
+      setMessages((prev) => [...prev, { id: botMessageId, text: '请先登录后再继续使用 AI 教练。', isBot: true, createdAt: new Date() }]);
       return;
     }
 
     if (attachment) {
       try {
+        let finalUri = attachment.uri;
+
+
+        setIsGenerating(true);
+        setUploadProgress(0);
+
         const result = await analyzeMedia({
           token: validToken,
-          uri: attachment.uri,
+          uri: finalUri,
           name: attachment.name,
           mimeType: attachment.mimeType,
           userInput: userText,
           sessionId,
+          onProgress: (p) => setUploadProgress(p)
         });
 
-        if (result.session_id && result.session_id !== sessionIdRef.current) {
-          await setSessionId(result.session_id);
-          sessionIdRef.current = result.session_id;
-        }
+        setUploadProgress(null);
+
+        const botMessageId = Math.random().toString(36).slice(2);
+        setMessages((prev) => [...prev, { id: botMessageId, text: '', isBot: true, createdAt: new Date() }]);
+        currentBotTextRef.current = '';
+
+        setAgentStatus({ node: 'Media Parser', message: '解析完成' });
+        setProcessingMessage(formatProcessingMessage({ node: 'Media Parser', message: '解析完成' }));
 
         setMessages((prev) =>
           prev.map((msg) =>
             msg.id === botMessageId
-              ? { ...msg, text: result.final_response, customCard: result.card }
+              ? {
+                  ...msg,
+                  text: result.final_response,
+                  customCard: result.card,
+                }
               : msg
           )
         );
         refreshSessions();
       } catch (error: any) {
+        setIsCompressing(false);
+        setUploadProgress(null);
+        setIsGenerating(false);
+        
+        const botMessageId = Math.random().toString(36).slice(2);
+        setMessages((prev) => [...prev, { id: botMessageId, text: '', isBot: true, createdAt: new Date() }]);
+        
         const message = error?.message || '媒体解析失败，请稍后再试。';
         setMessages((prev) =>
-          prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `鈿狅笍 ${message}` } : msg))
+          prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `⚠️ ${message}` } : msg))
         );
+        scrollToBottom();
       } finally {
         setIsGenerating(false);
         setAgentStatus(null);
-        scrollToBottom(true);
       }
       return;
     }
 
-    esRef.current?.close?.();
-    esRef.current = connectChatStream(
-      getBackendUrl(),
-      validToken,
-      {
-        user_input: userText,
-        session_id: sessionId,
-        mode,
-        use_training_sheet: useTrainingSheet,
-      },
-      {
-        onState: (state) => {
-          setAgentStatus(state);
-          setProcessingMessage(formatProcessingMessage(state));
-          scrollToBottom(true);
-        },
-        onToken: (tokenText) => {
-          currentBotTextRef.current += tokenText;
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: currentBotTextRef.current } : msg))
-          );
-          scrollToBottom(false);
-        },
-        onUI: (cardData) => {
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === botMessageId ? { ...msg, customCard: cardData } : msg))
-          );
-          scrollToBottom(true);
-        },
-        onDone: () => {
-          setIsGenerating(false);
-          setAgentStatus(null);
-          refreshSessions();
-          scrollToBottom(true);
-        },
-        onError: (err) => {
-          setIsGenerating(false);
-          setAgentStatus(null);
-          esRef.current?.close?.();
-          const message = err?.message || '系统处理本次消息时发生异常，本次结果已停止生成。';
-          const suffix = err?.code ? `\n\n閿欒鐮侊細${err.code}` : '';
-          setMessages((prev) =>
-            prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `鈿狅笍 ${message}${suffix}` } : msg))
-          );
-          scrollToBottom(true);
-        },
-      }
-    );
-  }, [
-    formatProcessingMessage,
-    getValidToken,
-    inputText,
-    isGenerating,
-    mode,
-    pendingAttachment,
-    refreshSessions,
-    scrollToBottom,
-    sessionId,
-    setSessionId,
-    useTrainingSheet,
-  ]);
+    // Normal text message flow
+    setIsGenerating(true);
+    const initialStatus = { node: 'Intent Classifier', message: '正在分析用户意图...' };
+    setAgentStatus(initialStatus);
+    setProcessingMessage(formatProcessingMessage(initialStatus));
 
+    const botMessageId = Math.random().toString(36).slice(2);
+    setMessages((prev) => [...prev, { id: botMessageId, text: '', isBot: true, createdAt: new Date() }]);
+    currentBotTextRef.current = '';
+
+    try {
+      esRef.current?.close?.();
+      esRef.current = connectChatStream(
+        getBackendUrl(),
+        validToken,
+        {
+          user_input: userText,
+          session_id: sessionId,
+          mode,
+          use_training_sheet: useTrainingSheet,
+        },
+        {
+          onState: (state) => {
+            setAgentStatus(state);
+            setProcessingMessage(formatProcessingMessage(state));
+            scrollToBottom(true);
+          },
+          onToken: (tokenText) => {
+            currentBotTextRef.current += tokenText;
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: currentBotTextRef.current } : msg))
+            );
+            scrollToBottom(false);
+          },
+          onUI: (cardData) => {
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === botMessageId ? { ...msg, customCard: cardData } : msg))
+            );
+            scrollToBottom(true);
+          },
+          onDone: () => {
+            setIsGenerating(false);
+            setAgentStatus(null);
+            refreshSessions();
+            scrollToBottom(true);
+          },
+          onError: (err) => {
+            setIsGenerating(false);
+            setAgentStatus(null);
+            esRef.current?.close?.();
+            const message = err?.message || '????????????????????????';
+            const suffix = err?.code ? `\n\n????${err.code}` : '';
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `?? ${message}${suffix}` } : msg))
+            );
+            scrollToBottom(true);
+          },
+        }
+      );
+    } catch (error: any) {
+      setIsGenerating(false);
+      setAgentStatus(null);
+      const message = error?.message || '???????????';
+      setMessages((prev) =>
+        prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `?? ${message}` } : msg))
+      );
+    }
+  }, [inputText, pendingAttachment, isGenerating, sessionId, mode, useTrainingSheet, getValidToken, refreshSessions, formatProcessingMessage, scrollToBottom]);
   useEffect(() => {
     if (!isLoggedIn) {
       resetPlan();
@@ -1105,6 +1124,30 @@ export default function ChatScreen() {
                   训练表                </Animated.Text>
               </TouchableOpacity>
             </Animated.View>
+          </View>
+        )}
+
+        {(isCompressing || uploadProgress !== null) && (
+          <View
+            style={[
+              styles.pendingAttachmentBar,
+              {
+                backgroundColor: isDark ? 'rgba(30, 30, 36, 0.85)' : 'rgba(255, 255, 255, 0.95)',
+                borderColor: borderCol,
+                paddingVertical: 12,
+              },
+            ]}
+          >
+            <View style={[styles.pendingAttachmentTextWrap, { marginLeft: 8 }]}>
+              <Text style={[styles.pendingAttachmentTitle, { color: textCol, marginBottom: 6 }]}>
+                {isCompressing ? '正在压缩视频以节省流量...' : `正在上传... ${Math.round((uploadProgress || 0) * 100)}%`}
+              </Text>
+              {uploadProgress !== null && (
+                <View style={{ width: '100%', height: 4, backgroundColor: isDark ? '#333' : '#E5E5EA', borderRadius: 2, overflow: 'hidden' }}>
+                  <View style={{ width: `${Math.round(uploadProgress * 100)}%`, height: '100%', backgroundColor: '#007AFF' }} />
+                </View>
+              )}
+            </View>
           </View>
         )}
 

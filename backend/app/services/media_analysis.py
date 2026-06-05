@@ -91,6 +91,14 @@ MOVEMENT_RESPONSE_SYSTEM = """
 - 如果检测质量一般，要坦诚说明视频角度或清晰度可能影响判断
 """
 
+MOVEMENT_RESPONSE_SYSTEM += """
+
+Critical evidence rule:
+- Do not infer or name a specific exercise from MediaPipe pose metrics alone.
+- Only name the exercise if structured_result includes detected_exercise/action_label, or the user explicitly names the exercise.
+- If the exercise is unknown, state that the current pipeline can assess visible posture stability but cannot reliably identify the exercise type.
+"""
+
 PORTION_EXPLICIT_PATTERN = re.compile(
     r"(\d+\s?(g|kg|克|千克|公斤|ml|毫升|个|份|碗|盘|杯|勺|块|片|串|盒))",
     re.IGNORECASE,
@@ -697,6 +705,12 @@ def _analyze_pose_frames(video_bytes: bytes) -> Dict[str, Any]:
         "issues": issues,
         "observed_frames": observed_frames,
         "valid_frames": valid_frames,
+        "detected_exercise": None,
+        "analysis_basis": "mediapipe_pose_geometry_only",
+        "limitations": [
+            "pose metrics can estimate visible stability and symmetry",
+            "pose metrics alone should not be used to identify the exercise name",
+        ],
     }
 
 
@@ -732,7 +746,9 @@ async def analyze_movement_video(
         system_prompt=MOVEMENT_RESPONSE_SYSTEM,
         user_prompt=(
             f"用户请求：{user_input}\n"
-            f"结构化姿态结果：{json.dumps(pose_result, ensure_ascii=False)}"
+            f"结构化姿态结果：{json.dumps(pose_result, ensure_ascii=False)}\n"
+            "Evidence constraint: do not name a specific exercise unless the user named it or "
+            "structured_result.detected_exercise/action_label is present."
         ),
         temperature=0.35,
         max_tokens=700,

@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.database.models import NewApiToken, Subscription, UserQuotaPolicy
 from app.services.crypto import decrypt_secret, encrypt_secret
 from app.services.errors import NewApiProvisionError
@@ -78,9 +79,9 @@ async def get_user_tier(user_id: str, db: AsyncSession) -> str:
     sub = result.scalars().first()
     if not sub or sub.status not in ("trialing", "active"):
         return "free"
-    if sub.current_period_end and sub.current_period_end < datetime.datetime.utcnow():
+    if sub.current_period_end and sub.current_period_end < utc_now():
         sub.status = "expired"
-        sub.updated_at = datetime.datetime.utcnow()
+        sub.updated_at = utc_now()
         await db.commit()
         return "free"
     return sub.tier or "free"
@@ -226,7 +227,7 @@ class NewApiService:
             reusable.model_limits = policy.allowed_models or []
             reusable.quota_granted = int(policy.monthly_quota_units)
             reusable.quota_available_cache = max(int(reusable.quota_available_cache or 0), int(policy.monthly_quota_units))
-            reusable.updated_at = datetime.datetime.utcnow()
+            reusable.updated_at = utc_now()
             await db.commit()
             return reusable
         elif settings.NEWAPI_SHARED_TOKEN and settings.ENV == "development":
@@ -269,6 +270,6 @@ class NewApiService:
             token.quota_available_cache = available
         if isinstance(granted, int):
             token.quota_granted = granted
-        token.updated_at = datetime.datetime.utcnow()
+        token.updated_at = utc_now()
         await db.commit()
         return usage

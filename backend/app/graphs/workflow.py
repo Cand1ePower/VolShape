@@ -219,7 +219,7 @@ async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession) -
     import datetime
     import uuid
     plan_id = str(uuid.uuid4())
-    plan_json["plan_id"] = plan_id  # 灏嗙墿鐞?UUID 鍥炲～鑷?plan_json锛屼娇鍓嶇鍗＄墖娓叉煋鏃惰兘鑾峰彇 plan_id
+    plan_json["plan_id"] = plan_id  # ?? plan_id????????????????
     new_plan = TrainingPlan(
         id=plan_id,
         user_id=user_id,
@@ -258,7 +258,7 @@ async def _safe_llm_structured(
     user_id: Optional[str] = None,
     db: Optional[AsyncSession] = None,
     session_id: Optional[str] = None,
-    langfuse_parent: Optional[Any] = None,  # 浼犲叆 NodeSpan._span 浠ュ缓绔?Langfuse 宓屽杩借釜
+    langfuse_parent: Optional[Any] = None,  # 传入 NodeSpan._span 以建立 Langfuse 嵌套追踪
 ) -> dict:
     try:
         return await llm_call_structured(
@@ -274,7 +274,7 @@ async def _safe_llm_structured(
         raise LLMGatewayError(str(e), details={"error_type": e.__class__.__name__}) from e
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 1. Intent Classifier
+# 1. Intent Classifier
 async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -290,7 +290,7 @@ async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> D
         },
         metadata={"node_order": 1},
     ) as span:
-        # 鍚屾鎻愬彇鍜屽啓鍏ョ粨鏋勫寲璁板繂锛圠1/L2/L3 灞傦級
+        # ?????????????L1/L2/L3?
         changes = await MemoryService.extract_and_sync_memory(user_input, user_id, db)
 
         result = await _safe_llm_structured(
@@ -317,7 +317,7 @@ async def intent_classifier_node(state: AgentState, config: RunnableConfig) -> D
     return {"intent": intent, "route": intent}
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 2. Profile Retrieval
+# 2. Profile Retrieval
 async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -368,7 +368,7 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
     return {"user_profile": profile, "recent_events": recent, "mem0_context": state.get("mem0_context", "")}
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 3. Planner
+# 3. Planner
 async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -418,7 +418,7 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     return {"plan_steps": plan_steps}
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 4. Quick Combined (蹇€熸ā寮?
+# 4. Quick Combined (????)
 async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -511,7 +511,7 @@ async def quick_combined_node(state: AgentState, config: RunnableConfig) -> Dict
     }
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 5. Executor (浠呰缁嗘ā寮?
+# 5. Executor (?????)
 async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -626,7 +626,7 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     }
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 6. Evaluator (浠呰缁嗘ā寮?
+# 6. Evaluator (?????)
 async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -714,7 +714,7 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
     }
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 7. Corrector (浠呰缁嗘ā寮?
+# 7. Corrector (?????)
 async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -757,7 +757,7 @@ async def corrector_node(state: AgentState, config: RunnableConfig) -> Dict[str,
     return {"error_count": error_count, "corrector_feedback": combined, "route": "executor"}
 
 
-# 鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺愨晲鈺?# 8. Response Builder (璇︾粏妯″紡 / 闈炶缁冩剰鍥剧殑閫氱敤鍥炲鑺傜偣)
+# 8. Response Builder (???? / ????????????)
 async def response_builder_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
     user_id = state["user_id"]
@@ -883,8 +883,8 @@ workflow.set_entry_point("intent_classifier")
 
 
 def route_intent(state: AgentState) -> str:
-    # 鎵€鏈夋剰鍥鹃兘鍏堣蛋 profile_retrieval锛岀‘淇?AI 鍥炲鏃惰兘璇诲彇鍒拌缁冨巻鍙层€佽繎鏈熶簨浠剁瓑鏁版嵁
-    # 锛堜箣鍓?chat 鎰忓浘鐩存帴璺冲埌 response_builder锛屽鑷?AI 鐪嬩笉鍒拌缁冨畬鎴愯褰曪級
+    # ??????? profile_retrieval??? AI ???????????????????
+    # ?? chat ?????? response_builder???????????????
     return "profile_retrieval"
 
 
@@ -893,13 +893,13 @@ workflow.add_conditional_edges("intent_classifier", route_intent, {
 })
 
 def route_after_profile(state: AgentState) -> str:
-    """profile_retrieval 瀹屾垚鍚庯紝鏍规嵁鎰忓浘鍐冲畾涓嬩竴涓妭鐐广€?    - training_plan 鈫?planner锛堢敓鎴愯缁冭鍒掓祦绋嬶級
-    - 鍏朵粬鎰忓浘锛坈hat/diet_log/profile_update锛夆啋 response_builder锛堢洿鎺ョ敓鎴愬洖澶嶏級
+    """profile_retrieval ???????????????
+    - training_plan -> planner??????????
+    - ?????chat/diet_log/profile_update?-> response_builder????????
     """
     if state.get("intent") == "training_plan":
         return "planner"
     return "response_builder"
-
 
 workflow.add_conditional_edges("profile_retrieval", route_after_profile, {
     "planner": "planner",

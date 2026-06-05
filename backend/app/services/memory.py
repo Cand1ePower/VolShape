@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import utc_now_iso
 from app.database.models import Events, UserMetrics, UserProfile
 
 CORE_PROFILE_KEYS = {
@@ -207,7 +208,7 @@ def _build_dynamic_entry(item: Dict[str, Any]) -> Dict[str, Any]:
     payload = {
         "value": item["value"],
         "type": item["type"],
-        "updated_at": datetime.datetime.utcnow().isoformat(),
+        "updated_at": utc_now_iso(),
         "source": "agent_extracted",
     }
     if item.get("unit"):
@@ -236,7 +237,7 @@ def _build_event_payload(item: Dict[str, Any]) -> Dict[str, Any]:
         "key": item["key"],
         "value": item["value"],
         "type": item["type"],
-        "timestamp": datetime.datetime.utcnow().isoformat(),
+        "timestamp": utc_now_iso(),
     }
     if item.get("unit"):
         payload["unit"] = item["unit"]
@@ -318,7 +319,7 @@ class MemoryService:
                             "key": key,
                             "injury": injury_name,
                             "action": action,
-                            "timestamp": datetime.datetime.utcnow().isoformat(),
+                            "timestamp": utc_now_iso(),
                         },
                         event_date=datetime.date.today(),
                     )

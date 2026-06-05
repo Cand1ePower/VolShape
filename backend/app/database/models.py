@@ -3,6 +3,8 @@ from typing import List, Optional
 from sqlalchemy import Boolean, String, Date, DateTime, Numeric, Integer, ForeignKey, JSON, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
+from app.core.time import utc_now
+
 class Base(DeclarativeBase):
     pass
 
@@ -20,9 +22,9 @@ class AppUser(Base):
     role: Mapped[str] = mapped_column(String(30), default="user")
     email_verified_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
     last_login_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
     sessions: Mapped[List["AuthSession"]] = relationship("AuthSession", back_populates="user", cascade="all, delete-orphan")
@@ -41,7 +43,7 @@ class AuthIdentity(Base):
     provider: Mapped[str] = mapped_column(String(40), nullable=False)
     provider_subject: Mapped[str] = mapped_column(String(255), nullable=False)
     provider_email: Mapped[Optional[str]] = mapped_column(String(255))
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class AuthSession(Base):
@@ -55,7 +57,7 @@ class AuthSession(Base):
     ip: Mapped[Optional[str]] = mapped_column(String(80))
     expires_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     user: Mapped["AppUser"] = relationship("AppUser", back_populates="sessions")
 
@@ -71,9 +73,9 @@ class Subscription(Base):
     current_period_start: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
     current_period_end: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
     cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
     user: Mapped["AppUser"] = relationship("AppUser", back_populates="subscription")
@@ -90,7 +92,7 @@ class UserQuotaPolicy(Base):
     max_context_tokens: Mapped[int] = mapped_column(Integer, default=16000)
     max_output_tokens: Mapped[int] = mapped_column(Integer, default=2048)
     features: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class UserUsageDaily(Base):
@@ -105,9 +107,9 @@ class UserUsageDaily(Base):
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
     quota_used: Mapped[int] = mapped_column(Integer, default=0)
     cost_estimated: Mapped[float] = mapped_column(Numeric(12, 6), default=0.0)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
 
@@ -127,7 +129,7 @@ class LLMRequest(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     error_code: Mapped[Optional[str]] = mapped_column(String(120))
     request_id: Mapped[Optional[str]] = mapped_column(String(120))
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
 class NewApiToken(Base):
@@ -144,9 +146,9 @@ class NewApiToken(Base):
     quota_available_cache: Mapped[int] = mapped_column(Integer, default=0)
     expires_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
     status: Mapped[str] = mapped_column(String(30), default="active")
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
     user: Mapped["AppUser"] = relationship("AppUser", back_populates="newapi_tokens")
@@ -163,7 +165,7 @@ class AuditLog(Base):
     ip: Mapped[Optional[str]] = mapped_column(String(80))
     user_agent: Mapped[Optional[str]] = mapped_column(String(500))
     metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 class UserProfile(Base):
     """
@@ -183,10 +185,10 @@ class UserProfile(Base):
     medical_conditions: Mapped[Optional[list]] = mapped_column(JSON, default=list)
     dynamic_attributes: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now
     )
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
 
     # 关联关系
@@ -210,7 +212,7 @@ class UserMetrics(Base):
     value: Mapped[float] = mapped_column(Numeric(10, 2), nullable=False)
     unit: Mapped[str] = mapped_column(String(20), nullable=False)  # "kg", "%", "reps" 等
     recorded_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now
     )
     source: Mapped[str] = mapped_column(String(50), default="user_input")  # "user_input", "agent_extracted", "wearable"
 
@@ -231,7 +233,7 @@ class Events(Base):
     payload: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     event_date: Mapped[datetime.date] = mapped_column(Date, default=datetime.date.today)
     recorded_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now
     )
 
     user: Mapped["UserProfile"] = relationship("UserProfile", back_populates="events")
@@ -250,7 +252,7 @@ class TrainingPlan(Base):
     status: Mapped[str] = mapped_column(String(20), default="active")  # active, completed, archived
     completion_data: Mapped[Optional[dict]] = mapped_column(JSON, default=dict)  # 打勾完成的数据
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now
     )
 
     user: Mapped["UserProfile"] = relationship("UserProfile", back_populates="training_plans")
@@ -272,7 +274,7 @@ class DietRecord(Base):
     total_fat: Mapped[float] = mapped_column(Numeric(6, 2), default=0.0)
     image_url: Mapped[Optional[str]] = mapped_column(String(500))
     recorded_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now
     )
 
     user: Mapped["UserProfile"] = relationship("UserProfile", back_populates="diet_records")
@@ -287,7 +289,7 @@ class ConversationMessage(Base):
     session_id: Mapped[str] = mapped_column(String, nullable=False, default="default")
     role: Mapped[str] = mapped_column(String(20), nullable=False)  # "user" or "assistant"
     content: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     user: Mapped["UserProfile"] = relationship("UserProfile")
 
@@ -299,9 +301,9 @@ class ConversationSession(Base):
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("user_profile.user_id"), nullable=False, index=True)
     title: Mapped[str] = mapped_column(String(120), nullable=False, default="New Chat")
-    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=datetime.datetime.utcnow)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now, onupdate=utc_now
     )
     pinned_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
     last_message_at: Mapped[Optional[datetime.datetime]] = mapped_column(DateTime(timezone=True))
@@ -322,7 +324,7 @@ class WeeklySummary(Base):
     summary_text: Mapped[str] = mapped_column(String, nullable=False)
     metrics_snapshot: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime.datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.datetime.utcnow
+        DateTime(timezone=True), default=utc_now
     )
 
     user: Mapped["UserProfile"] = relationship("UserProfile", back_populates="weekly_summaries")

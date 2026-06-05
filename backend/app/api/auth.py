@@ -14,6 +14,7 @@ from app.core.auth import (
     issue_session,
     verify_password,
 )
+from app.core.time import utc_now
 from app.database.models import AppUser, AuthSession
 from app.database.session import get_db
 from app.services.quota import QuotaService
@@ -71,7 +72,7 @@ async def register(request: RegisterRequest, http_request: Request, db: AsyncSes
         password_hash=hash_password(request.password),
         status="active",
         role="user",
-        email_verified_at=datetime.datetime.utcnow(),
+        email_verified_at=utc_now(),
     )
     db.add(user)
     await db.flush()
@@ -95,7 +96,7 @@ async def refresh(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
     token_hash = hash_token(request.refresh_token)
     result = await db.execute(select(AuthSession).where(AuthSession.refresh_token_hash == token_hash))
     session = result.scalars().first()
-    if not session or session.revoked_at or session.expires_at < datetime.datetime.utcnow():
+    if not session or session.revoked_at or session.expires_at < utc_now():
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="刷新凭证无效或已过期")
     user = await db.get(AppUser, session.user_id)
     if not user or user.status != "active":
@@ -115,7 +116,7 @@ async def logout(request: RefreshRequest, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(AuthSession).where(AuthSession.refresh_token_hash == token_hash))
     session = result.scalars().first()
     if session:
-        session.revoked_at = datetime.datetime.utcnow()
+        session.revoked_at = utc_now()
         await db.commit()
     return {"status": "ok"}
 

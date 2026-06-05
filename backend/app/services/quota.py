@@ -6,6 +6,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import extract, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.time import utc_now
 from app.database.models import LLMRequest, NewApiToken, Subscription, UserUsageDaily
 from app.services.newapi import get_policy_for_user
 
@@ -64,7 +65,7 @@ class QuotaService:
     async def increment_message(user_id: str, db: AsyncSession) -> None:
         usage = await _today_usage(user_id, db)
         usage.message_count += 1
-        usage.updated_at = datetime.datetime.utcnow()
+        usage.updated_at = utc_now()
         await db.commit()
 
     @staticmethod
@@ -104,7 +105,7 @@ class QuotaService:
         usage.prompt_tokens += int(prompt_tokens or 0)
         usage.completion_tokens += int(completion_tokens or 0)
         usage.quota_used += int(quota or 0)
-        usage.updated_at = datetime.datetime.utcnow()
+        usage.updated_at = utc_now()
         await db.commit()
 
     @staticmethod

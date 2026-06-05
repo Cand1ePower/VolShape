@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
 from app.core.auth import ensure_user_profile, get_current_user_id
+from app.core.time import utc_now
 from app.database.models import ConversationMessage, ConversationSession, Events
 from app.database.session import AsyncSessionLocal, get_db
 from app.graphs.workflow import app_workflow
@@ -88,7 +89,7 @@ async def _touch_session(
     last_message_at: Optional[datetime.datetime] = None,
 ) -> ConversationSession:
     session = await db.get(ConversationSession, session_id)
-    now = datetime.datetime.utcnow()
+    now = utc_now()
     if session and session.user_id != user_id:
         raise HTTPException(status_code=403, detail="无权访问该对话")
 
@@ -166,8 +167,8 @@ async def _ensure_conversation_sessions(user_id: str, db: AsyncSession) -> list[
             id=legacy_session_id,
             user_id=user_id,
             title=title,
-            created_at=first_at or datetime.datetime.utcnow(),
-            updated_at=last_at or datetime.datetime.utcnow(),
+            created_at=first_at or utc_now(),
+            updated_at=last_at or utc_now(),
             last_message_at=last_at,
         )
         db.add(session)
@@ -179,8 +180,8 @@ async def _ensure_conversation_sessions(user_id: str, db: AsyncSession) -> list[
             id=str(uuid.uuid4()),
             user_id=user_id,
             title="新的对话",
-            created_at=datetime.datetime.utcnow(),
-            updated_at=datetime.datetime.utcnow(),
+            created_at=utc_now(),
+            updated_at=utc_now(),
         )
         db.add(session)
         session_map[session.id] = session
@@ -296,7 +297,7 @@ async def _save_message(
     else:
         stored_content = content
 
-    created_at = datetime.datetime.utcnow()
+    created_at = utc_now()
     await ensure_user_profile(user_id, db)
     await db.flush()
     db.add(
@@ -469,8 +470,8 @@ async def create_chat_session(
         id=str(uuid.uuid4()),
         user_id=user_id,
         title=_clip_session_title(request.title or "新的对话"),
-        created_at=datetime.datetime.utcnow(),
-        updated_at=datetime.datetime.utcnow(),
+        created_at=utc_now(),
+        updated_at=utc_now(),
     )
     db.add(session)
     await db.commit()
@@ -488,8 +489,8 @@ async def update_chat_session(
     session = await db.get(ConversationSession, resolved_session_id)
     if not session or session.user_id != user_id or session.archived_at is not None:
         raise HTTPException(status_code=404, detail="对话不存在")
-    session.pinned_at = datetime.datetime.utcnow() if request.pinned else None
-    session.updated_at = datetime.datetime.utcnow()
+    session.pinned_at = utc_now() if request.pinned else None
+    session.updated_at = utc_now()
     await db.commit()
     await db.refresh(session)
     return {"session": _session_to_dict(session)}
@@ -512,8 +513,8 @@ async def delete_chat_session(
             ConversationMessage.session_id == resolved_session_id,
         )
     )
-    session.archived_at = datetime.datetime.utcnow()
-    session.updated_at = datetime.datetime.utcnow()
+    session.archived_at = utc_now()
+    session.updated_at = utc_now()
     await db.commit()
 
     sessions = await _ensure_conversation_sessions(user_id, db)
@@ -580,7 +581,7 @@ async def clear_session(
     session = await db.get(ConversationSession, resolved_session_id)
     if session:
         session.last_message_at = None
-        session.updated_at = datetime.datetime.utcnow()
+        session.updated_at = utc_now()
         if session.title != "新的对话":
             session.title = "新的对话"
     await db.commit()

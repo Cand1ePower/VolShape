@@ -6,6 +6,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth import get_current_user_id
+from app.core.time import utc_now
 from app.database.models import AuditLog, Subscription
 from app.database.session import get_db
 from app.services.newapi import NewApiService
@@ -70,7 +71,7 @@ async def create_checkout_session(
 
     result = await db.execute(select(Subscription).where(Subscription.user_id == user_id))
     subscription = result.scalars().first()
-    now = datetime.datetime.utcnow()
+    now = utc_now()
     period_end = now + PLAN_DURATIONS[plan_id] if plan_id in PLAN_DURATIONS else None
     status_value = "trialing" if plan_id == "trial_pro" else "active"
     provider = "trial" if plan_id == "trial_pro" else "manual"

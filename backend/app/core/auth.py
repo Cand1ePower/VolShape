@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.time import utc_now
 from app.database.models import AppUser, AuthSession, Subscription, UserProfile
 from app.database.session import get_db
 
@@ -22,7 +23,7 @@ ALGORITHM = "HS256"
 
 
 def _utcnow() -> datetime.datetime:
-    return datetime.datetime.utcnow()
+    return utc_now()
 
 
 def hash_password(password: str) -> str:

@@ -33,6 +33,9 @@ class Settings:
     DEEPSEEK_BASE_URL: str = _env("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
     LLM_LIGHT_MODEL: str = _env("LLM_LIGHT_MODEL", "deepseek-chat")
     LLM_HEAVY_MODEL: str = _env("LLM_HEAVY_MODEL", "deepseek-chat")
+    LLM_VISION_MODEL: str = _env("LLM_VISION_MODEL", LLM_HEAVY_MODEL or "deepseek-chat")
+    VISION_API_KEY: str = _env("VISION_API_KEY", "")
+    VISION_BASE_URL: str = _env("VISION_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
 
     # New API gateway. When enabled, VolShape provisions one managed New API token
     # per user and routes model calls through the gateway.
@@ -53,6 +56,15 @@ class Settings:
     EMBEDDING_BASE_URL: str = _env("EMBEDDING_BASE_URL", "")
     EMBEDDING_MODEL: str = _env("EMBEDDING_MODEL", "")
     EMBEDDING_DIMS: int = int(os.getenv("EMBEDDING_DIMS", "768"))
+
+    # FatSecret nutrition API
+    FATSECRET_AUTH_MODE: str = _env("FATSECRET_AUTH_MODE", "auto")
+    FATSECRET_CONSUMER_KEY: str = _env("FATSECRET_CONSUMER_KEY", "")
+    FATSECRET_CONSUMER_SECRET: str = _env("FATSECRET_CONSUMER_SECRET", "")
+    FATSECRET_CLIENT_ID: str = _env("FATSECRET_CLIENT_ID", "")
+    FATSECRET_CLIENT_SECRET: str = _env("FATSECRET_CLIENT_SECRET", "")
+    FATSECRET_TOKEN_URL: str = _env("FATSECRET_TOKEN_URL", "https://oauth.fatsecret.com/connect/token")
+    FATSECRET_API_BASE_URL: str = _env("FATSECRET_API_BASE_URL", "https://platform.fatsecret.com/rest/server.api")
 
     # Tavily Web Search
     TAVILY_API_KEY: str = _env("TAVILY_API_KEY", "")

@@ -13,11 +13,26 @@ from app.services.crypto import decrypt_secret, encrypt_secret
 from app.services.errors import NewApiProvisionError
 
 
+def _policy_models() -> list[str]:
+    models = [
+        settings.LLM_LIGHT_MODEL,
+        settings.LLM_HEAVY_MODEL,
+        settings.LLM_VISION_MODEL,
+        "deepseek-v4-flash",
+        "deepseek-chat",
+    ]
+    unique: list[str] = []
+    for model in models:
+        if model and model not in unique:
+            unique.append(model)
+    return unique
+
+
 DEFAULT_POLICIES = {
     "free": {
         "daily_messages": 10,
         "monthly_quota_units": 50_000,
-        "allowed_models": ["deepseek-v4-flash", "deepseek-chat"],
+        "allowed_models": _policy_models(),
         "max_context_tokens": 16_000,
         "max_output_tokens": 2048,
         "features": {"quick": True, "detailed": False, "training_sheet": True},
@@ -25,7 +40,7 @@ DEFAULT_POLICIES = {
     "pro": {
         "daily_messages": 100,
         "monthly_quota_units": 1_000_000,
-        "allowed_models": ["deepseek-v4-flash", "deepseek-chat"],
+        "allowed_models": _policy_models(),
         "max_context_tokens": 64_000,
         "max_output_tokens": 4096,
         "features": {"quick": True, "detailed": True, "training_sheet": True},
@@ -33,7 +48,7 @@ DEFAULT_POLICIES = {
     "premium": {
         "daily_messages": 500,
         "monthly_quota_units": 5_000_000,
-        "allowed_models": ["deepseek-v4-flash", "deepseek-chat"],
+        "allowed_models": _policy_models(),
         "max_context_tokens": 128_000,
         "max_output_tokens": 8192,
         "features": {"quick": True, "detailed": True, "training_sheet": True, "weekly_report": True},

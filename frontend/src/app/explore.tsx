@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ScrollView, View, Text, StyleSheet, useColorScheme, Platform,
   TouchableOpacity, useWindowDimensions, Modal, ActivityIndicator, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
 import { getBackendBaseUrl } from '@/services/api';
@@ -57,6 +58,14 @@ const tierLabel = (tier?: string | null) => {
   return 'Free';
 };
 
+const mealTypeLabel = (mealType?: string | null) => {
+  if (mealType === 'breakfast') return '早餐';
+  if (mealType === 'lunch') return '午餐';
+  if (mealType === 'dinner') return '晚餐';
+  if (mealType === 'snack') return '加餐';
+  return '未分类';
+};
+
 export default function ExploreScreen() {
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
@@ -91,6 +100,7 @@ export default function ExploreScreen() {
   const [plansVisible, setPlansVisible] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [checkoutError, setCheckoutError] = useState('');
+  const [expandedEventIndex, setExpandedEventIndex] = useState<number | null>(null);
 
   const displayValue = (value: any) => {
     if (!isLoggedIn) return '--';
@@ -106,6 +116,34 @@ export default function ExploreScreen() {
     if (goal === 'strength') return '力量';
     return goal;
   };
+
+  const nutritionSummary = memoryData?.nutrition_summary || null;
+  const latestNutrition = nutritionSummary?.latest_record || null;
+
+  const formatMacroValue = (value: any, unit = '') => {
+    if (!isLoggedIn) return '--';
+    if (value === null || value === undefined || value === '') return '--';
+    const numeric = typeof value === 'number' ? value : Number(value);
+    if (Number.isNaN(numeric)) return '--';
+    return `${numeric}${unit}`;
+  };
+
+  const loadProfileSnapshot = useCallback(async () => {
+    try {
+      const baseUrl = getBackendBaseUrl();
+      const validToken = await getValidToken();
+      if (!validToken) throw new Error('auth required');
+      const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
+      const data = await response.json();
+      setMemoryData(data);
+
+      const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
+      const mem0Json = await mem0Resp.json();
+      setMem0Data(mem0Json.memories || []);
+    } catch (err) {
+      console.log('Background fetching profile failed:', err);
+    }
+  }, [getValidToken]);
 
   const startCheckout = async (planId: string) => {
     const validToken = await getValidToken();
@@ -137,16 +175,7 @@ export default function ExploreScreen() {
     setMemoryLoading(true);
     setMemoryModalVisible(true);
     try {
-      const baseUrl = getBackendBaseUrl();
-      const validToken = await getValidToken();
-      if (!validToken) throw new Error('auth required');
-      const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
-      const data = await response.json();
-      setMemoryData(data);
-      
-      const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
-      const mem0Json = await mem0Resp.json();
-      setMem0Data(mem0Json.memories || []);
+      await loadProfileSnapshot();
     } catch (err) {
       console.error('Failed to fetch memory:', err);
     } finally {
@@ -176,26 +205,19 @@ export default function ExploreScreen() {
   // Automatically fetch metrics and profile in background when logged in
   useEffect(() => {
     if (isLoggedIn) {
-      (async () => {
-        try {
-          const baseUrl = getBackendBaseUrl();
-          const validToken = await getValidToken();
-          if (!validToken) throw new Error('auth required');
-          const response = await fetch(`${baseUrl}/api/chat/profile`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
-          const data = await response.json();
-          setMemoryData(data);
-          
-          const mem0Resp = await fetch(`${baseUrl}/api/chat/mem0`, { headers: { Authorization: `Bearer ${validToken}`, Connection: 'close' } });
-          const mem0Json = await mem0Resp.json();
-          setMem0Data(mem0Json.memories || []);
-        } catch (err) {
-          console.log('Background fetching profile failed:', err);
-        }
-      })();
+      loadProfileSnapshot();
     } else {
       setMemoryData(null);
     }
-  }, [isLoggedIn, getValidToken]);
+  }, [isLoggedIn, loadProfileSnapshot]);
+
+  useFocusEffect(
+    useCallback(() => {
+      if (isLoggedIn) {
+        loadProfileSnapshot();
+      }
+    }, [isLoggedIn, loadProfileSnapshot])
+  );
 
   return (
     <ScrollView style={{ backgroundColor: bgCol }} contentInset={insets} contentContainerStyle={[styles.scrollContent, {
@@ -338,6 +360,76 @@ export default function ExploreScreen() {
           </View>
         </View>
 
+        <View style={[styles.card, { backgroundColor: cardBg, borderColor: borderCol, padding: dynamicPadding }]}>
+          <View style={styles.memHeaderRow}>
+            <View>
+              <Text style={[styles.cardTitle, { color: textCol }]}>营养记录</Text>
+              <Text style={[styles.planSubtitle, { color: subTextCol }]}>
+                对话中的饮食卡片会自动同步到这里并持久化保存
+              </Text>
+            </View>
+            {isLoggedIn && (
+              <TouchableOpacity activeOpacity={0.7} style={styles.viewMemBtn} onPress={loadProfileSnapshot}>
+                <Text style={styles.viewMemBtnText}>刷新营养数据</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+
+          <View style={styles.statGrid}>
+            {[
+              { label: '今日热量', val: formatMacroValue(nutritionSummary?.today?.calories, ' kcal') },
+              { label: '今日蛋白', val: formatMacroValue(nutritionSummary?.today?.protein, ' g') },
+              { label: '7天日均热量', val: formatMacroValue(nutritionSummary?.last7days?.avg_calories, ' kcal') },
+              { label: '7天记录餐次', val: formatMacroValue(nutritionSummary?.last7days?.meals_count, ' 次') },
+            ].map((item, index) => (
+              <View key={index} style={styles.statItem}>
+                <Text style={styles.statLabel}>{item.label}</Text>
+                <Text style={[styles.statVal, { color: textCol }]}>{item.val}</Text>
+              </View>
+            ))}
+          </View>
+
+          <View style={[styles.nutritionDetailCard, { backgroundColor: isDark ? 'rgba(52,199,89,0.08)' : 'rgba(52,199,89,0.06)' }]}>
+            <View style={styles.nutritionDetailHeader}>
+              <Text style={[styles.nutritionDetailTitle, { color: textCol }]}>最近一餐</Text>
+              <Text style={[styles.nutritionMealType, { color: subTextCol }]}>
+                {isLoggedIn && latestNutrition ? mealTypeLabel(latestNutrition.meal_type) : '--'}
+              </Text>
+            </View>
+            <Text style={[styles.nutritionFoods, { color: subTextCol }]}>
+              {isLoggedIn && latestNutrition?.food_items?.length
+                ? latestNutrition.food_items.map((item: any) => item.name).join('、')
+                : '暂无饮食记录'}
+            </Text>
+            <View style={styles.nutritionMacroRow}>
+              <View style={styles.nutritionMacroItem}>
+                <Text style={styles.statLabel}>热量</Text>
+                <Text style={[styles.nutritionMacroValue, { color: textCol }]}>
+                  {formatMacroValue(latestNutrition?.total_calories, ' kcal')}
+                </Text>
+              </View>
+              <View style={styles.nutritionMacroItem}>
+                <Text style={styles.statLabel}>蛋白质</Text>
+                <Text style={[styles.nutritionMacroValue, { color: textCol }]}>
+                  {formatMacroValue(latestNutrition?.total_protein, ' g')}
+                </Text>
+              </View>
+              <View style={styles.nutritionMacroItem}>
+                <Text style={styles.statLabel}>碳水</Text>
+                <Text style={[styles.nutritionMacroValue, { color: textCol }]}>
+                  {formatMacroValue(latestNutrition?.total_carbs, ' g')}
+                </Text>
+              </View>
+              <View style={styles.nutritionMacroItem}>
+                <Text style={styles.statLabel}>脂肪</Text>
+                <Text style={[styles.nutritionMacroValue, { color: textCol }]}>
+                  {formatMacroValue(latestNutrition?.total_fat, ' g')}
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
         <View style={{ height: Spacing.four }} />
       </View>
 
@@ -477,15 +569,36 @@ export default function ExploreScreen() {
                 <Text style={{ fontSize: 11, fontWeight: '800', color: '#007AFF', marginTop: 14, marginBottom: 8, textTransform: 'uppercase', letterSpacing: 0.8 }}>Layer 3: 近期事件</Text>
                 <View style={{ borderWidth: 0.5, borderRadius: 12, padding: 12, borderColor: borderCol }}>
                   {(memoryData.recent_events || []).length > 0
-                    ? memoryData.recent_events.slice(0, 20).map((ev: any, i: number) => (
-                      <View key={i} style={{ flexDirection: 'row', paddingVertical: 5, gap: 8, alignItems: 'center' }}>
-                        <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: ev.type === 'training' ? 'rgba(0,122,255,0.1)' : ev.type === 'diet' ? 'rgba(52,199,89,0.1)' : 'rgba(255,149,0,0.1)' }}>
-                          <Text style={{ fontSize: 9, fontWeight: '700', color: ev.type === 'training' ? '#007AFF' : ev.type === 'diet' ? '#34C759' : '#FF9500' }}>{ev.type}</Text>
-                        </View>
-                        <Text style={{ fontSize: 10, color: subTextCol, width: 72 }}>{ev.date}</Text>
-                        <Text style={{ fontSize: 10, color: textCol, flex: 1 }} numberOfLines={1}>{JSON.stringify(ev.payload)}</Text>
-                      </View>
-                    ))
+                    ? memoryData.recent_events.slice(0, 20).map((ev: any, i: number) => {
+                        const isExpanded = expandedEventIndex === i;
+                        return (
+                          <TouchableOpacity 
+                            key={i} 
+                            activeOpacity={0.7}
+                            onPress={() => setExpandedEventIndex(isExpanded ? null : i)}
+                            style={{ paddingVertical: 6, borderBottomWidth: i < memoryData.recent_events.length - 1 ? 0.5 : 0, borderBottomColor: borderCol }}
+                          >
+                            <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
+                              <View style={{ paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, backgroundColor: ev.type === 'training' ? 'rgba(0,122,255,0.1)' : ev.type === 'diet' ? 'rgba(52,199,89,0.1)' : 'rgba(255,149,0,0.1)' }}>
+                                <Text style={{ fontSize: 9, fontWeight: '700', color: ev.type === 'training' ? '#007AFF' : ev.type === 'diet' ? '#34C759' : '#FF9500' }}>{ev.type}</Text>
+                              </View>
+                              <Text style={{ fontSize: 10, color: subTextCol, width: 72 }}>{ev.date}</Text>
+                              {!isExpanded && (
+                                <Text style={{ fontSize: 10, color: textCol, flex: 1 }} numberOfLines={1}>
+                                  {JSON.stringify(ev.payload)}
+                                </Text>
+                              )}
+                            </View>
+                            {isExpanded && (
+                              <View style={{ marginTop: 8, padding: 8, backgroundColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)', borderRadius: 8 }}>
+                                <Text style={{ fontSize: 10, color: textCol, fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }) }}>
+                                  {JSON.stringify(ev.payload, null, 2)}
+                                </Text>
+                              </View>
+                            )}
+                          </TouchableOpacity>
+                        );
+                      })
                     : <Text style={{ color: subTextCol, fontSize: 12 }}>无</Text>}
                 </View>
 
@@ -555,6 +668,14 @@ const styles = StyleSheet.create({
   statLabel: { fontSize: 9, color: '#8E8E93', marginBottom: 2 },
   statVal: { fontWeight: 'bold', fontSize: 15 },
   statUnit: { fontSize: 11, color: '#8E8E93', fontWeight: 'normal' },
+  nutritionDetailCard: { marginTop: 12, borderRadius: 12, padding: 12 },
+  nutritionDetailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
+  nutritionDetailTitle: { fontSize: 13, fontWeight: '800' },
+  nutritionMealType: { fontSize: 11, fontWeight: '600' },
+  nutritionFoods: { marginTop: 6, fontSize: 11, lineHeight: 17 },
+  nutritionMacroRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
+  nutritionMacroItem: { flex: 1, minWidth: '44%', padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)' },
+  nutritionMacroValue: { fontSize: 14, fontWeight: '800', marginTop: 2 },
   // Modals
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
   loginModal: { width: '100%', maxWidth: 380, borderRadius: 24, borderWidth: 0.5, padding: 28 },

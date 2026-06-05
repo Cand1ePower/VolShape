@@ -1,6 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   Animated,
   Easing,
   Keyboard,
@@ -16,6 +17,8 @@ import {
   useColorScheme,
   useWindowDimensions,
 } from 'react-native';
+import * as ImagePicker from 'expo-image-picker';
+import { Image as ExpoImage } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -23,8 +26,10 @@ import { useNavigation } from 'expo-router';
 
 import { WorkoutCard } from '../components/ui/WorkoutCard';
 import { DietCard } from '../components/ui/DietCard';
+import { PortionConfirmCard } from '../components/ui/PortionConfirmCard';
 import { useAuth } from '../contexts/AuthContext';
 import { usePlan } from '../contexts/PlanContext';
+import { analyzeMedia, confirmPortion } from '../services/media';
 import { connectChatStream } from '../services/sse';
 import { getBackendBaseUrl } from '@/services/api';
 
@@ -34,6 +39,14 @@ interface Message {
   isBot: boolean;
   createdAt: Date;
   customCard?: any;
+  attachment?: MessageAttachment;
+}
+
+interface MessageAttachment {
+  uri?: string;
+  name: string;
+  mimeType?: string;
+  kind: 'image' | 'video';
 }
 
 interface ConversationSessionMeta {
@@ -46,11 +59,93 @@ interface ConversationSessionMeta {
   last_message_at?: string | null;
 }
 
+interface PendingAttachment {
+  uri: string;
+  name: string;
+  mimeType: string;
+  kind: 'image' | 'video';
+}
+
+const attachmentCardToMessageAttachment = (card?: any): MessageAttachment | undefined => {
+  if (!card || card.type !== 'media_attachment') {
+    return undefined;
+  }
+  return {
+    kind: card.mediaKind === 'video' ? 'video' : 'image',
+    name: card.fileName || 'media',
+    mimeType: card.mimeType || undefined,
+    uri: card.previewUri || undefined,
+  };
+};
+
 const getBackendUrl = () => `${getBackendBaseUrl()}/api/chat/stream`;
+
+const getAttachmentLabel = (attachment: PendingAttachment) =>
+  `${attachment.kind === 'image' ? '图片' : '视频'} · ${attachment.name}`;
 
 const WELCOME_TEXT = '你好，我是 VolShape AI 教练。告诉我你的训练目标、今天的需求，或者直接让我开始制定计划。';
 const LOGIN_WELCOME_TEXT = '你好，我是 VolShape AI 教练。请先登录后再继续使用。';
 const HISTORY_ERROR_TEXT = '你好，我是 VolShape AI 教练。当前聊天记录加载失败，请稍后重试。';
+
+function parseInlineBold(text: string) {
+  const parts: Array<{ text: string; bold: boolean }> = [];
+  const regex = /\*\*(.+?)\*\*/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      parts.push({ text: text.slice(lastIndex, match.index), bold: false });
+    }
+    parts.push({ text: match[1], bold: true });
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    parts.push({ text: text.slice(lastIndex), bold: false });
+  }
+
+  return parts.length ? parts : [{ text, bold: false }];
+}
+
+function renderFormattedMessage(
+  text: string,
+  options: {
+    color: string;
+    fontSize: number;
+    lineHeight: number;
+  }
+) {
+  const blocks = text
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+
+  return blocks.map((block, blockIndex) => {
+    const parts = parseInlineBold(block);
+    return (
+      <Text
+        key={`block-${blockIndex}`}
+        selectable
+        style={[
+          styles.messageText,
+          blockIndex === 0 ? null : styles.messageParagraphText,
+          {
+            color: options.color,
+            fontSize: options.fontSize,
+            lineHeight: options.lineHeight,
+          },
+        ]}
+      >
+        {parts.map((part, partIndex) => (
+          <Text key={`part-${blockIndex}-${partIndex}`} style={part.bold ? styles.messageBold : undefined}>
+            {part.text}
+          </Text>
+        ))}
+      </Text>
+    );
+  });
+}
 
 export default function ChatScreen() {
   const scheme = useColorScheme();
@@ -77,6 +172,9 @@ export default function ChatScreen() {
   const [isSessionModalVisible, setIsSessionModalVisible] = useState(false);
   const [isSessionLoading, setIsSessionLoading] = useState(false);
   const [menuSession, setMenuSession] = useState<ConversationSessionMeta | null>(null);
+  const [pendingAttachment, setPendingAttachment] = useState<PendingAttachment | null>(null);
+  const [portionSubmittingId, setPortionSubmittingId] = useState<string | null>(null);
+  const [previewAttachment, setPreviewAttachment] = useState<MessageAttachment | null>(null);
 
   const lastScrollY = useRef(0);
   const keyboardLift = useRef(new Animated.Value(0)).current;
@@ -333,6 +431,7 @@ export default function ChatScreen() {
         }, 2000);
       } else {
         setUseTrainingSheet(false);
+        setPendingAttachment(null);
         Animated.timing(sheetAnim, {
           toValue: 1,
           duration: 250,
@@ -342,6 +441,104 @@ export default function ChatScreen() {
       }
     },
     [capsuleAnim, sheetAnim]
+  );
+
+  const handlePickAttachment = useCallback(async () => {
+    try {
+      const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+      if (!permission.granted) {
+        Alert.alert('无法访问相册', '请先允许 VolShape 访问你的媒体库。');
+        return;
+      }
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images', 'videos'] as any,
+        allowsEditing: false,
+        quality: 0.9,
+      });
+
+      if (result.canceled || !result.assets?.length) {
+        return;
+      }
+
+      const asset = result.assets[0];
+      const kind: 'image' | 'video' = asset.type === 'video' ? 'video' : 'image';
+      const fallbackName = `${kind}-${Date.now()}${kind === 'image' ? '.jpg' : '.mp4'}`;
+      const derivedName = asset.fileName || asset.uri.split('/').pop()?.split('?')[0] || fallbackName;
+      const mimeType = asset.mimeType || (kind === 'image' ? 'image/jpeg' : 'video/mp4');
+
+      setPendingAttachment({
+        uri: asset.uri,
+        name: derivedName,
+        mimeType,
+        kind,
+      });
+    } catch (error) {
+      console.error('[Media] Pick failed:', error);
+      Alert.alert('选择失败', '暂时无法读取这份媒体文件，请稍后再试。');
+    }
+  }, []);
+
+  const handleConfirmPortion = useCallback(
+    async (messageId: string, cardData: any, items: any[]) => {
+      try {
+        setPortionSubmittingId(messageId);
+        const validToken = await getValidToken();
+        if (!validToken) {
+          throw new Error('请先登录后再继续使用 AI 教练。');
+        }
+
+        const result = await confirmPortion({
+          token: validToken,
+          sessionId: sessionIdRef.current,
+          prompt: cardData.prompt,
+          mealType: cardData.mealType,
+          portionNote: cardData.portionNote,
+          items,
+        });
+
+        if (result.session_id && result.session_id !== sessionIdRef.current) {
+          await setSessionId(result.session_id);
+          sessionIdRef.current = result.session_id;
+        }
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === messageId ? { ...msg, text: result.final_response, customCard: result.card } : msg
+          )
+        );
+        refreshSessions();
+        scrollToBottom(true);
+      } catch (error: any) {
+        const message = error?.message || '确认分量失败，请稍后再试。';
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === messageId ? { ...msg, text: `鈿狅笍 ${message}` } : msg))
+        );
+      } finally {
+        setPortionSubmittingId(null);
+      }
+    },
+    [getValidToken, refreshSessions, scrollToBottom, setSessionId]
+  );
+
+  const handleConfirmDietRecord = useCallback(
+    async (messageId: string) => {
+      setMessages((prev) =>
+        prev.map((msg) =>
+          msg.id === messageId && msg.customCard?.type === 'diet_card'
+            ? {
+                ...msg,
+                customCard: {
+                  ...msg.customCard,
+                  confirmed: true,
+                },
+              }
+            : msg
+        )
+      );
+      refreshSessions();
+    },
+    [refreshSessions]
   );
 
   const handleToggleSheet = useCallback(() => {
@@ -396,10 +593,19 @@ export default function ChatScreen() {
     }
 
     const userText = inputText.trim();
+    const attachment = pendingAttachment;
+    const localMessageId = Math.random().toString(36).slice(2);
     setInputText('');
+    setPendingAttachment(null);
     setMessages((prev) => [
       ...prev,
-      { id: Math.random().toString(36).slice(2), text: userText, isBot: false, createdAt: new Date() },
+      {
+        id: localMessageId,
+        text: userText,
+        isBot: false,
+        createdAt: new Date(),
+        attachment: attachment || undefined,
+      },
     ]);
     setIsGenerating(true);
     const initialStatus = { node: 'Intent Classifier', message: '正在分析用户意图...' };
@@ -418,6 +624,43 @@ export default function ChatScreen() {
       setMessages((prev) =>
         prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: '请先登录后再继续使用 AI 教练。' } : msg))
       );
+      return;
+    }
+
+    if (attachment) {
+      try {
+        const result = await analyzeMedia({
+          token: validToken,
+          uri: attachment.uri,
+          name: attachment.name,
+          mimeType: attachment.mimeType,
+          userInput: userText,
+          sessionId,
+        });
+
+        if (result.session_id && result.session_id !== sessionIdRef.current) {
+          await setSessionId(result.session_id);
+          sessionIdRef.current = result.session_id;
+        }
+
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === botMessageId
+              ? { ...msg, text: result.final_response, customCard: result.card }
+              : msg
+          )
+        );
+        refreshSessions();
+      } catch (error: any) {
+        const message = error?.message || '媒体解析失败，请稍后再试。';
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `鈿狅笍 ${message}` } : msg))
+        );
+      } finally {
+        setIsGenerating(false);
+        setAgentStatus(null);
+        scrollToBottom(true);
+      }
       return;
     }
 
@@ -461,9 +704,9 @@ export default function ChatScreen() {
           setAgentStatus(null);
           esRef.current?.close?.();
           const message = err?.message || '系统处理本次消息时发生异常，本次结果已停止生成。';
-          const suffix = err?.code ? `\n\n错误码：${err.code}` : '';
+          const suffix = err?.code ? `\n\n閿欒鐮侊細${err.code}` : '';
           setMessages((prev) =>
-            prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `⚠️ ${message}${suffix}` } : msg))
+            prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `鈿狅笍 ${message}${suffix}` } : msg))
           );
           scrollToBottom(true);
         },
@@ -475,9 +718,11 @@ export default function ChatScreen() {
     inputText,
     isGenerating,
     mode,
+    pendingAttachment,
     refreshSessions,
     scrollToBottom,
     sessionId,
+    setSessionId,
     useTrainingSheet,
   ]);
 
@@ -593,13 +838,17 @@ export default function ChatScreen() {
           return;
         }
         setMessages(
-          data.messages.map((message: any, index: number) => ({
-            id: `hist-${message.created_at || index}`,
-            text: message.content,
-            isBot: message.role === 'assistant',
-            createdAt: message.created_at ? new Date(message.created_at) : new Date(),
-            customCard: message.customCard || undefined,
-          }))
+          data.messages.map((message: any, index: number) => {
+            const attachment = attachmentCardToMessageAttachment(message.customCard);
+            return {
+              id: `hist-${message.created_at || index}`,
+              text: message.content,
+              isBot: message.role === 'assistant',
+              createdAt: message.created_at ? new Date(message.created_at) : new Date(),
+              customCard: attachment ? undefined : message.customCard || undefined,
+              attachment,
+            };
+          })
         );
       } catch (error) {
         if (historyRequestRef.current !== requestId || sessionIdRef.current !== targetSessionId) {
@@ -705,20 +954,40 @@ export default function ChatScreen() {
                       : styles.userBubble,
                   ]}
                 >
-                  {msg.text ? (
-                    <Text
-                      selectable
+                  {msg.attachment && (
+                    <TouchableOpacity
+                      activeOpacity={0.88}
                       style={[
-                        styles.messageText,
+                        styles.messageAttachment,
                         {
-                          color: msg.isBot ? textCol : '#FFFFFF',
-                          fontSize: dynamicFontSize,
-                          lineHeight: dynamicFontSize + 7,
+                          backgroundColor: msg.isBot ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.16)',
+                          borderColor: msg.isBot ? borderCol : 'rgba(255,255,255,0.18)',
                         },
                       ]}
+                      onPress={() => msg.attachment && setPreviewAttachment(msg.attachment)}
                     >
-                      {msg.text}
-                    </Text>
+                      {msg.attachment.kind === 'image' && msg.attachment.uri ? (
+                        <ExpoImage source={{ uri: msg.attachment.uri }} style={styles.messageAttachmentThumb} contentFit="cover" />
+                      ) : (
+                        <View style={styles.messageAttachmentIcon}>
+                          <Ionicons
+                            name={msg.attachment.kind === 'image' ? 'image-outline' : 'videocam-outline'}
+                            size={16}
+                            color={msg.isBot ? subTextCol : '#FFFFFF'}
+                          />
+                        </View>
+                      )}
+                    </TouchableOpacity>
+                  )}
+
+                  {msg.text ? (
+                    <View>
+                      {renderFormattedMessage(msg.text, {
+                        color: msg.isBot ? textCol : '#FFFFFF',
+                        fontSize: dynamicFontSize,
+                        lineHeight: dynamicFontSize + 7,
+                      })}
+                    </View>
                   ) : isStreamingPlaceholder ? (
                     <View style={styles.processingLine}>
                       <ActivityIndicator size="small" color="#007AFF" style={{ marginRight: 8 }} />
@@ -730,10 +999,19 @@ export default function ChatScreen() {
 
                   {msg.customCard && (
                     <View style={styles.cardContainer}>
-                      {msg.customCard.type === 'workout_card' ? (
-                        <WorkoutCard data={msg.customCard} />
-                      ) : msg.customCard.type === 'diet_card' ? (
-                        <DietCard data={msg.customCard} />
+                    {msg.customCard.type === 'workout_card' ? (
+                      <WorkoutCard data={msg.customCard} />
+                    ) : msg.customCard.type === 'diet_card' ? (
+                      <DietCard
+                        data={msg.customCard}
+                        onConfirm={() => handleConfirmDietRecord(msg.id)}
+                      />
+                    ) : msg.customCard.type === 'portion_confirm_card' ? (
+                      <PortionConfirmCard
+                        data={msg.customCard}
+                          loading={portionSubmittingId === msg.id}
+                          onConfirm={(items) => handleConfirmPortion(msg.id, msg.customCard, items)}
+                        />
                       ) : null}
                     </View>
                   )}
@@ -824,10 +1102,55 @@ export default function ChatScreen() {
                     },
                   ]}
                 >
-                  训练表
-                </Animated.Text>
+                  训练表                </Animated.Text>
               </TouchableOpacity>
             </Animated.View>
+          </View>
+        )}
+
+        {pendingAttachment && (
+          <View
+            style={[
+              styles.pendingAttachmentBar,
+              {
+                backgroundColor: frostedBg,
+                borderColor: borderCol,
+              },
+            ]}
+          >
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.pendingAttachmentMain}
+              onPress={() => setPreviewAttachment(pendingAttachment)}
+            >
+              {pendingAttachment.kind === 'image' ? (
+                <ExpoImage
+                  source={{ uri: pendingAttachment.uri }}
+                  style={styles.pendingAttachmentThumb}
+                  contentFit="cover"
+                />
+              ) : (
+                <View style={styles.pendingAttachmentIcon}>
+                  <Ionicons name="videocam-outline" size={16} color={subTextCol} />
+                </View>
+              )}
+              <View style={styles.pendingAttachmentTextWrap}>
+                <Text style={[styles.pendingAttachmentTitle, { color: textCol }]}>
+                  {pendingAttachment.kind === 'image' ? '已选择图片' : '已选择视频'}
+                </Text>
+                <Text style={[styles.pendingAttachmentSubtitle, { color: subTextCol }]} numberOfLines={1}>
+                  {pendingAttachment.name}
+                </Text>
+              </View>
+            </TouchableOpacity>
+
+            <TouchableOpacity
+              activeOpacity={0.85}
+              style={styles.pendingAttachmentClose}
+              onPress={() => setPendingAttachment(null)}
+            >
+              <Ionicons name="close" size={16} color={subTextCol} />
+            </TouchableOpacity>
           </View>
         )}
 
@@ -840,6 +1163,29 @@ export default function ChatScreen() {
             },
           ]}
         >
+          {mode === 'detailed' && (
+            <TouchableOpacity
+              activeOpacity={0.85}
+              disabled={isGenerating}
+              style={[
+                styles.attachButton,
+                {
+                  backgroundColor: pendingAttachment
+                    ? 'rgba(0,122,255,0.16)'
+                    : isDark
+                      ? 'rgba(255,255,255,0.06)'
+                      : 'rgba(0,0,0,0.04)',
+                },
+              ]}
+              onPress={handlePickAttachment}
+            >
+              <Ionicons
+                name={pendingAttachment ? 'document-attach' : 'add-circle-outline'}
+                size={18}
+                color={pendingAttachment ? '#007AFF' : subTextCol}
+              />
+            </TouchableOpacity>
+          )}
           <TextInput
             style={[styles.textInput, { color: textCol, fontSize: dynamicFontSize }]}
             value={inputText}
@@ -868,6 +1214,29 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </Animated.View>
+
+      <Modal visible={!!previewAttachment} transparent animationType="fade" onRequestClose={() => setPreviewAttachment(null)}>
+        <Pressable style={styles.previewOverlay} onPress={() => setPreviewAttachment(null)}>
+          <Pressable style={styles.previewCard} onPress={() => {}}>
+            <TouchableOpacity style={styles.previewCloseButton} onPress={() => setPreviewAttachment(null)}>
+              <Ionicons name="close" size={18} color="#FFFFFF" />
+            </TouchableOpacity>
+
+            {previewAttachment?.kind === 'image' && previewAttachment.uri ? (
+              <ExpoImage
+                source={{ uri: previewAttachment.uri }}
+                style={styles.previewImage}
+                contentFit="contain"
+              />
+            ) : (
+              <View style={styles.previewFallback}>
+                <Ionicons name="videocam-outline" size={28} color="#FFFFFF" />
+                <Text style={styles.previewFallbackText}>当前仅支持图片放大预览</Text>
+              </View>
+            )}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal visible={isSessionModalVisible} transparent animationType="fade" onRequestClose={() => setIsSessionModalVisible(false)}>
         <View style={styles.modalOverlay}>
@@ -910,8 +1279,7 @@ export default function ChatScreen() {
                 <View style={styles.emptySessionState}>
                   <Text style={[styles.emptySessionTitle, { color: textCol }]}>还没有可显示的对话</Text>
                   <Text style={[styles.emptySessionSubtitle, { color: subTextCol }]}>
-                    先新建一个对话，或者稍等片刻让最近会话同步完成。
-                  </Text>
+                    先新建一个对话，或者稍等片刻让最近会话同步完成。                  </Text>
                 </View>
               ) : (
                 visibleSessionList.map((session) => {
@@ -1064,6 +1432,27 @@ const styles = StyleSheet.create({
     elevation: 2,
   },
   messageText: { flexShrink: 1 },
+  messageParagraph: { marginTop: 10 },
+  messageParagraphText: { marginTop: 10 },
+  messageBold: { fontWeight: '800' },
+  messageAttachment: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    borderWidth: 1,
+    overflow: 'hidden',
+    marginBottom: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  messageAttachmentThumb: { width: '100%', height: '100%' },
+  messageAttachmentIcon: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   cardContainer: { marginTop: 12, width: '100%' },
   processingLine: { minWidth: 220, flexDirection: 'row', alignItems: 'center' },
   processingText: { flex: 1, fontSize: 13, fontWeight: '600' },
@@ -1078,6 +1467,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 6,
     gap: 8,
+  },
+  pendingAttachmentBar: {
+    width: '100%',
+    borderRadius: 18,
+    borderWidth: 0.5,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  pendingAttachmentMain: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  pendingAttachmentThumb: { width: 36, height: 36, borderRadius: 10 },
+  pendingAttachmentIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.06)',
+  },
+  pendingAttachmentTextWrap: { flex: 1 },
+  pendingAttachmentTitle: { fontSize: 13, fontWeight: '700' },
+  pendingAttachmentSubtitle: { fontSize: 11, marginTop: 2 },
+  pendingAttachmentClose: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   controlBar: {
     width: '100%',
@@ -1132,6 +1552,14 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.18,
     shadowRadius: 15,
     elevation: 6,
+  },
+  attachButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
   },
   textInput: {
     flex: 1,
@@ -1214,6 +1642,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
+  previewOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.82)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  previewCard: {
+    width: '100%',
+    maxWidth: 520,
+    maxHeight: '82%',
+    borderRadius: 24,
+    overflow: 'hidden',
+    backgroundColor: '#111216',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 16,
+  },
+  previewCloseButton: {
+    position: 'absolute',
+    top: 12,
+    right: 12,
+    zIndex: 2,
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  previewImage: { width: '100%', height: 420, borderRadius: 18 },
+  previewFallback: { alignItems: 'center', justifyContent: 'center', paddingVertical: 56, gap: 10 },
+  previewFallbackText: { color: '#FFFFFF', fontSize: 13, fontWeight: '600' },
   sessionActionMenu: {
     width: '100%',
     maxWidth: 280,
@@ -1232,3 +1693,4 @@ const styles = StyleSheet.create({
   },
   sessionActionText: { fontSize: 14, fontWeight: '600' },
 });
+

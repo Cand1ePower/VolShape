@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, Platform } from 'react-native';
+import { Platform, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useColorScheme } from 'react-native';
 
@@ -15,6 +15,7 @@ export interface FoodItem {
 export interface DietCardData {
   type: 'diet_card';
   record_id?: string;
+  confirmed?: boolean;
   mealType: 'breakfast' | 'lunch' | 'dinner' | 'snack';
   foodItems: FoodItem[];
   totalCalories: number;
@@ -26,57 +27,50 @@ export interface DietCardData {
 
 interface DietCardProps {
   data: DietCardData;
+  onConfirm?: () => void;
 }
 
-export const DietCard: React.FC<DietCardProps> = ({ data }) => {
+export const DietCard: React.FC<DietCardProps> = ({ data, onConfirm }) => {
   const scheme = useColorScheme();
   const isDark = scheme === 'dark';
 
-  // 商业级高级主题配色 (Glassmorphism Dark-Vibe Theme)
   const cardBg = isDark ? 'rgba(28, 28, 33, 0.65)' : 'rgba(255, 255, 255, 0.72)';
   const borderCol = isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)';
   const textCol = isDark ? '#FFFFFF' : '#1C1C1E';
   const subTextCol = isDark ? '#8E8E93' : '#666666';
 
-  // 营养素科学标志色
-  const proteinColor = '#FF3B30'; // 热情红 - 肌肉增长蛋白质
-  const carbsColor = '#FFCC00';   // 活力黄 - 能量来源碳水
-  const fatColor = '#34C759';     // 健康绿 - 优质脂肪
+  const proteinColor = '#FF5A4F';
+  const carbsColor = '#FFD24A';
+  const fatColor = '#66D16F';
 
   const mealNames = {
-    breakfast: '能量早餐',
-    lunch: '丰盛午餐',
-    dinner: '饱腹晚餐',
-    snack: '营养加餐'
+    breakfast: '营养早餐',
+    lunch: '均衡午餐',
+    dinner: '恢复晚餐',
+    snack: '营养加餐',
   };
 
-  // 💡 【商业化重构】杜绝硬编码！基于三大营养素真实克数，动态计算进度条占比，100% 真实联动！
   const totalMacros = (data.totalProtein || 0) + (data.totalCarbs || 0) + (data.totalFat || 0);
   const proteinWidth = totalMacros > 0 ? `${Math.round((data.totalProtein / totalMacros) * 100)}%` as const : '0%';
   const carbsWidth = totalMacros > 0 ? `${Math.round((data.totalCarbs / totalMacros) * 100)}%` as const : '0%';
   const fatWidth = totalMacros > 0 ? `${Math.round((data.totalFat / totalMacros) * 100)}%` as const : '0%';
 
-  const handleConfirm = () => {
-    Alert.alert(
-      "饮食数据已记录",
-      `已成功同步今天的${mealNames[data.mealType]}至您的健康档案！\n\n总摄入热量：${data.totalCalories} kcal\n蛋白质总量：${data.totalProtein} g`,
-      [{ text: "好的", onPress: () => console.log("Diet confirmed") }]
-    );
-  };
+  const isConfirmed = Boolean(data.confirmed);
 
   return (
-    <View style={[
-      styles.card, 
-      { 
-        backgroundColor: cardBg, 
-        borderColor: borderCol,
-        ...Platform.select({
-          web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
-          default: {}
-        })
-      }
-    ]}>
-      {/* 头部餐食与图片 */}
+    <View
+      style={[
+        styles.card,
+        {
+          backgroundColor: cardBg,
+          borderColor: borderCol,
+          ...Platform.select({
+            web: { backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any,
+            default: {},
+          }),
+        },
+      ]}
+    >
       <View style={styles.headerRow}>
         <View style={styles.headerInfo}>
           <Text style={[styles.mealTitle, { color: textCol }]}>{mealNames[data.mealType] || '饮食记录'}</Text>
@@ -84,23 +78,17 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
             {data.totalCalories} <Text style={styles.kcalUnit}>kcal</Text>
           </Text>
         </View>
-        
-        {data.imageUrl && (
-          <Image 
-            source={{ uri: data.imageUrl }} 
-            style={styles.foodImage}
-            contentFit="cover"
-            transition={300}
-          />
-        )}
+
+        {data.imageUrl ? (
+          <Image source={{ uri: data.imageUrl }} style={styles.foodImage} contentFit="cover" transition={300} />
+        ) : null}
       </View>
 
-      {/* 【核心联动组件】营养素动态进度条 */}
       <View style={styles.macroContainer}>
         <View style={styles.macroItem}>
           <Text style={[styles.macroLabel, { color: subTextCol }]}>蛋白质</Text>
           <Text style={[styles.macroValue, { color: proteinColor }]}>{data.totalProtein}g</Text>
-          <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)' }]}>
+          <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
             <View style={[styles.progressBarFill, { backgroundColor: proteinColor, width: proteinWidth }]} />
           </View>
         </View>
@@ -108,7 +96,7 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
         <View style={styles.macroItem}>
           <Text style={[styles.macroLabel, { color: subTextCol }]}>碳水化合物</Text>
           <Text style={[styles.macroValue, { color: carbsColor }]}>{data.totalCarbs}g</Text>
-          <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)' }]}>
+          <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
             <View style={[styles.progressBarFill, { backgroundColor: carbsColor, width: carbsWidth }]} />
           </View>
         </View>
@@ -116,25 +104,24 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
         <View style={styles.macroItem}>
           <Text style={[styles.macroLabel, { color: subTextCol }]}>优质脂肪</Text>
           <Text style={[styles.macroValue, { color: fatColor }]}>{data.totalFat}g</Text>
-          <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.05)' }]}>
+          <View style={[styles.progressBarBg, { backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)' }]}>
             <View style={[styles.progressBarFill, { backgroundColor: fatColor, width: fatWidth }]} />
           </View>
         </View>
       </View>
 
-      {/* 食物明细列表 */}
       <View style={styles.foodList}>
         <Text style={[styles.listTitle, { color: textCol }]}>智能估算细则</Text>
         <View style={styles.foodListWrapper}>
           {data.foodItems.map((item, idx) => (
-            <View 
-              key={idx} 
+            <View
+              key={`${item.name}-${idx}`}
               style={[
-                styles.foodRow, 
-                { 
-                  backgroundColor: isDark ? 'rgba(255, 255, 255, 0.02)' : 'rgba(0, 0, 0, 0.01)',
-                  borderBottomColor: idx === data.foodItems.length - 1 ? 'transparent' : borderCol 
-                }
+                styles.foodRow,
+                {
+                  backgroundColor: isDark ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.01)',
+                  borderBottomColor: idx === data.foodItems.length - 1 ? 'transparent' : borderCol,
+                },
               ]}
             >
               <View style={styles.foodNameCol}>
@@ -152,13 +139,15 @@ export const DietCard: React.FC<DietCardProps> = ({ data }) => {
         </View>
       </View>
 
-      {/* 确认录入按钮 */}
-      <TouchableOpacity 
-        activeOpacity={0.8}
-        style={styles.confirmButton} 
-        onPress={handleConfirm}
+      <TouchableOpacity
+        activeOpacity={isConfirmed ? 1 : 0.82}
+        disabled={isConfirmed}
+        style={[styles.confirmButton, isConfirmed ? styles.confirmButtonDone : null]}
+        onPress={onConfirm}
       >
-        <Text style={styles.confirmButtonText}>确认录入今日身体体征</Text>
+        <Text style={styles.confirmButtonText}>
+          {isConfirmed ? '已同步到营养档案' : '确认记录到营养档案'}
+        </Text>
       </TouchableOpacity>
     </View>
   );
@@ -194,11 +183,10 @@ const styles = StyleSheet.create({
   calorieCount: {
     fontSize: 30,
     fontWeight: '900',
-    letterSpacing: -1,
   },
   kcalUnit: {
     fontSize: 14,
-    fontWeight: 'normal',
+    fontWeight: '400',
     color: '#8E8E93',
   },
   foodImage: {
@@ -268,6 +256,8 @@ const styles = StyleSheet.create({
   },
   foodMacroCol: {
     alignItems: 'flex-end',
+    flexShrink: 1,
+    marginLeft: 10,
   },
   foodCal: {
     fontSize: 13,
@@ -279,7 +269,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   confirmButton: {
-    backgroundColor: '#34C759', // 亮色科学绿色
+    backgroundColor: '#34C759',
     borderRadius: 14,
     paddingVertical: 14,
     alignItems: 'center',
@@ -288,6 +278,10 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
+  },
+  confirmButtonDone: {
+    backgroundColor: '#2C2C2E',
+    shadowOpacity: 0,
   },
   confirmButtonText: {
     color: '#FFFFFF',

@@ -1,4 +1,4 @@
-﻿import base64
+import base64
 import datetime
 import json
 import math
@@ -497,17 +497,43 @@ async def analyze_food_image(
     db: AsyncSession,
     session_id: Optional[str],
 ) -> Dict[str, Any]:
-    result = await _run_food_vision_analysis(
-        image_bytes=image_bytes,
-        mime_type=mime_type,
-        user_input=user_input,
+    """
+    食物图片分析入口。
+    通过 MCP CapabilityPlanFactory 获取执行计划，
+    按顺序执行 DETECT → CANONICALIZE 两个阶段。
+    """
+    from app.services.mcp.factory import CapabilityPlanFactory
+    from app.services.mcp.types import Capability
+
+    plan = CapabilityPlanFactory.build(Capability.NUTRITION_PHOTO)
+
+    # 将原始输入打包成 payload 传入 Plan
+    payload = await plan.execute(
+        {
+            "image_bytes": image_bytes,
+            "mime_type": mime_type,
+            "user_prompt": user_input,
+        },
         user_id=user_id,
         db=db,
         session_id=session_id,
     )
-    meal_type = str(result.get("meal_type") or "snack")
-    portion_note = str(result.get("portion_note") or "")
-    draft_items = _draft_items_from_vision_result(result)
+
+    # 如果 MCP Vision 成功，使用其结果；否则回退到原始实现
+    vision_result = payload if payload.get("items") else None
+    if vision_result is None:
+        vision_result = await _run_food_vision_analysis(
+            image_bytes=image_bytes,
+            mime_type=mime_type,
+            user_input=user_input,
+            user_id=user_id,
+            db=db,
+            session_id=session_id,
+        )
+
+    meal_type = str(vision_result.get("meal_type") or "snack")
+    portion_note = str(vision_result.get("portion_note") or "")
+    draft_items = _draft_items_from_vision_result(vision_result)
 
     if needs_portion_confirmation(user_input, draft_items):
         return {
@@ -682,7 +708,26 @@ async def analyze_movement_video(
     db: AsyncSession,
     session_id: Optional[str],
 ) -> Dict[str, Any]:
-    pose_result = _analyze_pose_frames(video_bytes)
+    """
+    运动视频分析入口。
+    通过 MCP CapabilityPlanFactory 获取执行计划，
+    按顺序执行 POSE_EXTRACT 阶段，再由 LLM 将姿态数据转化为训练建议。
+    """
+    from app.services.mcp.factory import CapabilityPlanFactory
+    from app.services.mcp.types import Capability
+
+    plan = CapabilityPlanFactory.build(Capability.MOVEMENT_VIDEO)
+
+    payload = await plan.execute(
+        {"video_bytes": video_bytes},
+        user_id=user_id,
+        db=db,
+        session_id=session_id,
+    )
+
+    # pose_extract 阶段结果就是 payload，回退默认到直接调用
+    pose_result = payload.get("pose_extract") or _analyze_pose_frames(video_bytes)
+
     feedback = await llm_call(
         system_prompt=MOVEMENT_RESPONSE_SYSTEM,
         user_prompt=(

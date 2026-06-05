@@ -1,0 +1,67 @@
+{
+  "suite": "volshape_core_offline",
+  "version": "2026-06-05.1",
+  "cases": [
+    {
+      "id": "media_food_photo_explicit",
+      "category": "media_gate",
+      "input": "这是我今天的晚饭，大概有多少热量，多少蛋白质碳水？",
+      "media_kind": "image",
+      "expected": {
+        "should_invoke": true,
+        "capability": "nutrition_photo"
+      }
+    },
+    {
+      "id": "media_food_photo_implicit_upload_only",
+      "category": "media_gate",
+      "input": "上传一下",
+      "media_kind": "image",
+      "expected": {
+        "should_invoke": false,
+        "capability": "none"
+      }
+    },
+    {
+      "id": "media_video_posture_explicit",
+      "category": "media_gate",
+      "input": "帮我分析姿势是否标准，有哪些需要纠正",
+      "media_kind": "video",
+      "expected": {
+        "should_invoke": true,
+        "capability": "movement_video"
+      }
+    },
+    {
+      "id": "memory_current_illness",
+      "category": "memory_prompt",
+      "input": "今天好像感冒了，嗓子疼而且很累",
+      "expected": {
+        "should_capture": true,
+        "required_prompt_terms": ["state", "current_illness", "sick", "fatigued"]
+      }
+    },
+    {
+      "id": "memory_dynamic_tfcc",
+      "category": "memory_prompt",
+      "input": "我是男的，昨天掰手腕导致今天有点TFCC疼",
+      "expected": {
+        "should_capture": true,
+        "required_prompt_terms": ["Keys are NOT fixed", "injury", "tfcc_status"]
+      }
+    },
+    {
+      "id": "movement_no_action_hallucination",
+      "category": "prompt_audit",
+      "prompt_name": "movement_response",
+      "expected": {
+        "required_prompt_terms": [
+          "Do not infer",
+          "MediaPipe pose metrics alone",
+          "detected_exercise/action_label",
+          "cannot reliably identify the exercise type"
+        ]
+      }
+    }
+  ]
+}

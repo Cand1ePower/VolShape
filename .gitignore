@@ -46,3 +46,6 @@ skills-lock.json
 backend/*.log
 frontend/*.log
 /*.log
+
+# Local eval outputs
+backend/evals/reports/

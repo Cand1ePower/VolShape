@@ -1,0 +1,15 @@
+[Unit]
+Description=VolShape FastAPI backend
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/opt/volshape/backend
+EnvironmentFile=/opt/volshape/backend/.env
+ExecStart=/opt/volshape/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

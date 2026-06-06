@@ -1150,7 +1150,7 @@ export default function ChatScreen() {
             maxWidth: composerMaxWidth,
             left: isDesktopWeb ? '50%' : 0,
             right: isDesktopWeb ? 'auto' : 0,
-            marginLeft: isDesktopWeb ? -(composerMaxWidth / 2) : 0,
+            marginLeft: isDesktopWeb ? -(composerMaxWidth / 2) + 146 : 0,
             paddingHorizontal: 0,
             transform: [
               {
@@ -1571,15 +1571,16 @@ const styles = StyleSheet.create({
   chatBodyDesktop: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-    gap: 24,
-    paddingLeft: 72,
+    justifyContent: 'center',
+    gap: 32,
+    width: '100%',
   },
   desktopRail: {
-    width: 272,
+    width: 260,
     borderWidth: 0.5,
     borderRadius: 24,
-    padding: 20,
-    gap: 14,
+    padding: 16,
+    gap: 12,
     position: 'sticky',
     top: 124,
   } as any,

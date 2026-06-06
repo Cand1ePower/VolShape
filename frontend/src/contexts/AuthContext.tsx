@@ -69,14 +69,11 @@ function isJwtExpiringSoon(token: string | null, bufferSeconds = 60) {
   try {
     const [, payloadPart] = token.split('.');
     if (!payloadPart) return true;
-    const normalized = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = normalized + '='.repeat((4 - (normalized.length % 4 || 4)) % 4);
-    const bufferCtor = (globalThis as any).Buffer;
-    const decoded = Platform.OS === 'web'
-      ? atob(padded)
-      : bufferCtor
-        ? bufferCtor.from(padded, 'base64').toString('utf-8')
-        : padded;
+    // Base64url decode — works on all platforms (web, iOS, Android)
+    const base64 = payloadPart.replace(/-/g, '+').replace(/_/g, '/');
+    const decoded = decodeURIComponent(
+      [...atob(base64)].map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join('')
+    );
     const payload = JSON.parse(decoded);
     if (!payload?.exp) return true;
     const nowSeconds = Math.floor(Date.now() / 1000);

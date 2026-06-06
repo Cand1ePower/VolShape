@@ -131,8 +131,7 @@ async def _live_agent_stream_with_db(
                 final_state_snapshot.update(updates)
                 message = NODE_MESSAGE_MAP.get(node_name, f"正在执行 {node_name}...")
                 yield {
-                    "event": "state",
-                    "data": json.dumps({"node": node_name.replace("_", " ").title(), "message": message}),
+                    "data": json.dumps({"event": "state", "data": {"node": node_name.replace("_", " ").title(), "message": message}}),
                 }
 
         final_text = final_state_snapshot.get("final_response", "已完成处理。")
@@ -151,11 +150,11 @@ async def _live_agent_stream_with_db(
             print(f"[Memory GC Trigger Error] {exc}")
 
         for index in range(0, len(final_text), 30):
-            yield {"event": "token", "data": json.dumps({"text": final_text[index : index + 30]})}
+            yield {"data": json.dumps({"event": "token", "data": {"text": final_text[index : index + 30]}})}
             await asyncio.sleep(0.01)
 
         if ui_card:
-            yield {"event": "ui", "data": json.dumps(ui_card)}
+            yield {"data": json.dumps({"event": "ui", "data": ui_card})}
 
         finish_trace(
             langfuse_trace,
@@ -168,13 +167,13 @@ async def _live_agent_stream_with_db(
                 "intent": final_state_snapshot.get("intent", ""),
             },
         )
-        yield {"event": "done", "data": ""}
+        yield {"data": json.dumps({"event": "done"})}
 
     except Exception as exc:
         payload = error_payload(exc)
         await save_message(user_id, session_id, "assistant", f"⚠️ {payload['message']}", db)
-        yield {"event": "error", "data": json.dumps(payload, ensure_ascii=False)}
-        yield {"event": "done", "data": ""}
+        yield {"data": json.dumps({"event": "error", "data": payload})}
+        yield {"data": json.dumps({"event": "done"})}
 
 
 async def live_agent_stream(

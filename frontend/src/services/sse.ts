@@ -107,15 +107,36 @@ export function connectChatStream(
     }
   };
 
-  const onDoneListener: EventSourceListener = () => {
-    handlers.onDone?.();
-    eventSource.close();
+  // Catch-all message listener — works on native where named SSE events
+  // (event: state / event: token) may not be parsed by react-native-sse
+  const onMessageListener: EventSourceListener = (event: any) => {
+    if (!event?.data) return;
+    try {
+      const payload = JSON.parse(event.data);
+      // If payload has an "event" wrapper field, route to the appropriate handler
+      if (payload.event) {
+        switch (payload.event) {
+          case 'state': handlers.onState?.(payload.data); break;
+          case 'token': handlers.onToken?.({ text: payload.data?.text || '' }); break;
+          case 'ui': handlers.onUI?.(payload.data); break;
+          case 'done': handlers.onDone?.(); eventSource.close(); break;
+          case 'error': handlers.onError?.(payload.data); break;
+          default: break;
+        }
+        return;
+      }
+      // Fallback: try to detect legacy format
+      if (payload.node) { handlers.onState?.(payload); return; }
+      if (payload.text) { handlers.onToken?.(payload.text); return; }
+      if (payload.type === 'workout_card' || payload.type === 'diet_card') { handlers.onUI?.(payload); return; }
+    } catch {}
   };
 
-  // 绑定监听器，转换为 any 以绕过 strict typing
   const esAny = eventSource as any;
   esAny.addEventListener('open', onOpenListener);
   esAny.addEventListener('error', onErrorListener);
+  esAny.addEventListener('message', onMessageListener);  // catch-all
+  // Named listeners as fallback for web
   esAny.addEventListener('state', onStateListener);
   esAny.addEventListener('token', onTokenListener);
   esAny.addEventListener('ui', onUIListener);

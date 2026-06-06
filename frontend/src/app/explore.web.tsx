@@ -231,12 +231,12 @@ export default function ExploreScreen() {
 
   return (
     <ScrollView style={{ backgroundColor: bgCol }} contentInset={insets} contentContainerStyle={[styles.scrollContent, {
-      paddingTop: Platform.OS === 'android' ? insets.top + Spacing.two : Spacing.four,
+      paddingTop: isDesktopWeb ? Spacing.four : 68,
       paddingBottom: insets.bottom,
       paddingHorizontal: isDesktopWeb ? 28 : Spacing.four,
     }]}>
       <View style={[styles.container, { maxWidth: contentMaxWidth }]}>
-        <View style={styles.header}>
+        <View style={[styles.header, !isDesktopWeb && { paddingLeft: 140 }]}>
           <Text style={[styles.headerTitle, { color: textCol }]}>我的</Text>
           <Text style={[styles.headerSubtitle, { color: subTextCol }]}>账号 · 记忆 · 数据</Text>
         </View>

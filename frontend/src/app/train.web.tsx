@@ -247,7 +247,7 @@ export default function TrainScreen() {
 
   if (!activePlan && !hasHistory) {
     return (
-      <View style={[styles.container, { backgroundColor: bgCol, paddingTop: insets.top + 20 }]}>
+      <View style={[styles.container, { backgroundColor: bgCol, paddingTop: isDesktopWeb ? (insets.top + 20) : 68 }]}>
         <View style={styles.emptyState}>
           <Text style={styles.emptyIcon}>🏋️</Text>
           <Text style={[styles.emptyTitle, { color: textCol }]}>暂无训练计划</Text>
@@ -265,7 +265,7 @@ export default function TrainScreen() {
         contentContainerStyle={[
           styles.scrollContent,
           {
-            paddingTop: insets.top + 16,
+            paddingTop: isDesktopWeb ? (insets.top + 16) : 68,
             paddingBottom: insets.bottom + 120,
             paddingHorizontal: isDesktopWeb ? 28 : 16,
           },
@@ -276,8 +276,8 @@ export default function TrainScreen() {
         {/* Active Plan */}
         {activePlan && (
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: textCol }]}>当前训练</Text>
-            <View style={styles.header}>
+            <Text style={[styles.sectionTitle, { color: textCol }, !isDesktopWeb && { paddingLeft: 140 }]}>当前训练</Text>
+            <View style={[styles.header, !isDesktopWeb && { paddingLeft: 140 }]}>
               <Text style={[styles.title, { color: textCol }]}>{activePlan.title}</Text>
               {activePlan.disclaimer && (
                 <View style={[styles.disclaimerBox, { backgroundColor: 'rgba(255, 149, 0, 0.1)' }]}>
@@ -349,7 +349,7 @@ export default function TrainScreen() {
         {/* Training History Timeline */}
         {hasHistory && (
           <View style={styles.section}>
-            <View style={styles.historyTitleRow}>
+            <View style={[styles.historyTitleRow, !isDesktopWeb && { paddingLeft: 140 }]}>
               <Text style={[styles.sectionTitle, { color: textCol, marginBottom: 0 }]}>训练历史</Text>
               <TouchableOpacity 
                 activeOpacity={0.7} 

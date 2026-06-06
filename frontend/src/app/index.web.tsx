@@ -944,7 +944,7 @@ export default function ChatScreen() {
       >
         <View style={[styles.headerFrame, { maxWidth: headerMaxWidth }]}>
         <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
+          <View style={[styles.headerLeft, isMobileWeb && { paddingLeft: 140 }]}>
             <Text style={[styles.headerTitle, { color: textCol }]}>VolShape</Text>
             <View style={styles.headerSubtitleRow}>
               <View style={[styles.statusDot, { backgroundColor: isGenerating ? '#34C759' : isLoggedIn ? '#007AFF' : '#AEAEB2' }]} />

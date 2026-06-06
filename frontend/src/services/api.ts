@@ -6,10 +6,15 @@ export const getBackendBaseUrl = () => {
     return configuredUrl.replace(/\/$/, '');
   }
 
-  if (Platform.OS === 'android') {
-    return 'http://192.168.10.9:8000';
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const { protocol, hostname, origin } = window.location;
+    if (protocol.startsWith('http') && hostname && hostname !== 'localhost' && hostname !== '127.0.0.1') {
+      return origin.replace(/\/$/, '');
+    }
+    return 'http://localhost:8000';
   }
-  return 'http://localhost:8000';
+
+  return 'https://volshape.candlepower.cool';
 };
 
 export async function apiFetch(path: string, options: RequestInit = {}) {

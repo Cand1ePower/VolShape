@@ -4,6 +4,7 @@
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
+    "backgroundColor": "#0A0A0C",
     "icon": "./assets/images/icon.png",
     "scheme": "frontend",
     "userInterfaceStyle": "automatic",
@@ -21,6 +22,7 @@
     },
     "web": {
       "output": "static",
+      "backgroundColor": "#0A0A0C",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
@@ -38,6 +40,7 @@
       "expo-sqlite"
     ],
     "experiments": {
+      "baseUrl": "/app",
       "typedRoutes": true,
       "reactCompiler": true
     }

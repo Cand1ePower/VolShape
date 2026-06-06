@@ -32,6 +32,7 @@ yarn-error.log*
 *.swp
 *.swo
 .claude/
+docs
 
 # ── OS ──
 .DS_Store
@@ -40,7 +41,9 @@ Thumbs.db
 # Local Codex/agent state
 .agents/
 .codex/
+.codex-remote-attachments/
 skills-lock.json
+volshape-web-dist.tar
 
 # Local runtime logs
 backend/*.log

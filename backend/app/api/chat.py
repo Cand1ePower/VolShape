@@ -15,9 +15,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.auth import get_current_user_id
+from app.core.auth import get_current_user_id_from_token
 from app.database.models import ConversationMessage
-from app.database.session import AsyncSessionLocal, get_db
+from app.database.session import AsyncSessionLocal
 from app.graphs.workflow import app_workflow
 from app.services.errors import error_payload
 from app.services.memory import should_capture_long_term_memory
@@ -171,7 +171,14 @@ async def _live_agent_stream_with_db(
 
     except Exception as exc:
         payload = error_payload(exc)
-        await save_message(user_id, session_id, "assistant", f"⚠️ {payload['message']}", db)
+        try:
+            await db.rollback()
+        except Exception:
+            pass
+        try:
+            await save_message(user_id, session_id, "assistant", f"⚠️ {payload['message']}", db)
+        except Exception as save_exc:
+            print(f"[chat_stream] failed to persist error message: {save_exc}")
         yield {"data": json.dumps({"event": "error", "data": payload})}
         yield {"data": json.dumps({"event": "done"})}
 
@@ -202,12 +209,12 @@ async def live_agent_stream(
 @router.post("/stream")
 async def chat_stream(
     request: ChatRequest,
-    user_id: str = Depends(get_current_user_id),
-    db: AsyncSession = Depends(get_db),
+    user_id: str = Depends(get_current_user_id_from_token),
 ):
-    await QuotaService.assert_can_chat(user_id, db, request.mode or "quick")
-    await QuotaService.increment_message(user_id, db)
-    session_id = await resolve_session_id(user_id, request.session_id, db, allow_create=True)
+    async with AsyncSessionLocal() as db:
+        await QuotaService.assert_can_chat(user_id, db, request.mode or "quick")
+        await QuotaService.increment_message(user_id, db)
+        session_id = await resolve_session_id(user_id, request.session_id, db, allow_create=True)
     return EventSourceResponse(
         live_agent_stream(
             request.user_input,

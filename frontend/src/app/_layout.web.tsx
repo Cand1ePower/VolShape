@@ -125,9 +125,7 @@ export default function WebTabLayout() {
       <PlanProvider>
         <AnimatedSplashOverlay />
         <Tabs
-          tabBar={(props) =>
-            isDesktopWeb ? <DesktopSidebarTabBar {...props} isDark={isDark} /> : undefined
-          }
+          tabBar={isDesktopWeb ? (props) => <DesktopSidebarTabBar {...props} isDark={isDark} /> : undefined}
           screenOptions={{
             headerShown: false,
             tabBarActiveTintColor: '#007AFF',
@@ -148,7 +146,7 @@ export default function WebTabLayout() {
               paddingTop: 8,
               height: 58,
               ...(PlatformSpecificBlur as any),
-            },
+            } as any,
           }}
         >
           <Tabs.Screen

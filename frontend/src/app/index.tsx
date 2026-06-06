@@ -167,6 +167,7 @@ export default function ChatScreen() {
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
+  const [inputHeight, setInputHeight] = useState(42);
   const [agentStatus, setAgentStatus] = useState<{ node: string; message: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [mode, setMode] = useState<'quick' | 'detailed'>('quick');
@@ -205,6 +206,9 @@ export default function ChatScreen() {
   const subTextCol = isDark ? '#A1A1AA' : '#6B7280';
   const botBubbleBg = isDark ? 'rgba(24, 24, 28, 0.78)' : 'rgba(255, 255, 255, 0.9)';
   const frostedBg = isDark ? 'rgba(18, 18, 22, 0.9)' : 'rgba(255, 255, 255, 0.92)';
+  const inputLineHeight = dynamicFontSize + 6;
+  const inputMinHeight = 42;
+  const inputMaxHeight = inputLineHeight * 5;
   const currentSessionTitle = useMemo(
     () => sessionList.find((session) => session.id === sessionId)?.title || '新的对话',
     [sessionId, sessionList]
@@ -568,6 +572,14 @@ export default function ChatScreen() {
     }, 1000);
   }, [sheetAnim]);
 
+  const handleInputContentSizeChange = useCallback(
+    (event: any) => {
+      const contentHeight = Math.ceil(event?.nativeEvent?.contentSize?.height || inputMinHeight);
+      setInputHeight(Math.max(inputMinHeight, Math.min(inputMaxHeight, contentHeight)));
+    },
+    [inputMaxHeight, inputMinHeight]
+  );
+
   const handleScroll = useCallback(
     (event: any) => {
       if (isKeyboardVisible) return;
@@ -604,6 +616,7 @@ export default function ChatScreen() {
     const attachment = pendingAttachment;
     const localMessageId = Math.random().toString(36).slice(2);
     setInputText('');
+    setInputHeight(inputMinHeight);
     setPendingAttachment(null);
     setMessages((prev) => [
       ...prev,
@@ -750,7 +763,7 @@ export default function ChatScreen() {
         prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `?? ${message}` } : msg))
       );
     }
-  }, [inputText, pendingAttachment, isGenerating, sessionId, mode, useTrainingSheet, getValidToken, refreshSessions, formatProcessingMessage, scrollToBottom]);
+  }, [formatProcessingMessage, getValidToken, inputMinHeight, inputText, isGenerating, mode, pendingAttachment, refreshSessions, scrollToBottom, sessionId, useTrainingSheet]);
   useEffect(() => {
     if (!isLoggedIn) {
       resetPlan();
@@ -1272,7 +1285,15 @@ export default function ChatScreen() {
             </TouchableOpacity>
           )}
           <TextInput
-            style={[styles.textInput, { color: textCol, fontSize: dynamicFontSize }]}
+            style={[
+              styles.textInput,
+              {
+                color: textCol,
+                fontSize: dynamicFontSize,
+                lineHeight: inputLineHeight,
+                height: inputHeight,
+              },
+            ]}
             value={inputText}
             onChangeText={setInputText}
             placeholder="给 AI 教练发消息..."
@@ -1280,7 +1301,9 @@ export default function ChatScreen() {
             multiline
             maxLength={500}
             editable={!isGenerating}
+            scrollEnabled={inputHeight >= inputMaxHeight}
             onSubmitEditing={handleSend}
+            onContentSizeChange={handleInputContentSizeChange}
           />
           <TouchableOpacity
             activeOpacity={0.85}
@@ -1690,9 +1713,11 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    maxHeight: 120,
+    minHeight: 42,
     paddingVertical: 8,
     marginRight: 12,
+    overflow: 'hidden',
+    textAlignVertical: 'top',
     ...Platform.select({ web: { outlineStyle: 'none' } }),
   } as any,
   sendButton: {

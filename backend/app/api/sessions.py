@@ -288,27 +288,31 @@ async def save_message(
     else:
         stored_content = content
 
-    created_at = utc_now()
-    await ensure_user_profile(user_id, db)
-    await db.flush()
-    db.add(
-        ConversationMessage(
-            id=str(uuid.uuid4()),
-            user_id=user_id,
-            session_id=session_id,
-            role=role,
-            content=stored_content,
-            created_at=created_at,
+    try:
+        created_at = utc_now()
+        await ensure_user_profile(user_id, db)
+        await db.flush()
+        db.add(
+            ConversationMessage(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                session_id=session_id,
+                role=role,
+                content=stored_content,
+                created_at=created_at,
+            )
         )
-    )
-    await _touch_session(
-        db,
-        user_id,
-        session_id,
-        title=title_hint if role == "user" else None,
-        last_message_at=created_at,
-    )
-    await db.commit()
+        await _touch_session(
+            db,
+            user_id,
+            session_id,
+            title=title_hint if role == "user" else None,
+            last_message_at=created_at,
+        )
+        await db.commit()
+    except Exception:
+        await db.rollback()
+        raise
 
 
 # ---------------------------------------------------------------------------

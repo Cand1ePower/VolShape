@@ -107,6 +107,11 @@ export function connectChatStream(
     }
   };
 
+  const onDoneListener: EventSourceListener = () => {
+    handlers.onDone?.();
+    eventSource.close();
+  };
+
   // Catch-all message listener — works on native where named SSE events
   // (event: state / event: token) may not be parsed by react-native-sse
   const onMessageListener: EventSourceListener = (event: any) => {
@@ -117,7 +122,7 @@ export function connectChatStream(
       if (payload.event) {
         switch (payload.event) {
           case 'state': handlers.onState?.(payload.data); break;
-          case 'token': handlers.onToken?.({ text: payload.data?.text || '' }); break;
+          case 'token': handlers.onToken?.(payload.data?.text || ''); break;
           case 'ui': handlers.onUI?.(payload.data); break;
           case 'done': handlers.onDone?.(); eventSource.close(); break;
           case 'error': handlers.onError?.(payload.data); break;

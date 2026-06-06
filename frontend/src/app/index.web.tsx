@@ -163,14 +163,16 @@ export default function ChatScreen() {
   const dynamicFontSize = width < 375 ? 14 : 15;
   const [isWebMounted, setIsWebMounted] = useState(Platform.OS !== 'web');
   const isWeb = Platform.OS === 'web';
+  const isMobileWeb = isWebMounted && isWeb && width < 768;
   const isTabletWeb = isWebMounted && isWeb && width >= 768;
-  const isDesktopWeb = isWebMounted && isWeb && width >= 1180;
+  const isDesktopWeb = isWebMounted && isWeb && width >= 1024;
 
   const { sessionId, isLoggedIn, isLoading, getValidToken, setSessionId } = useAuth();
   const { resetPlan, syncWorkoutOnLogin } = usePlan();
 
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
+  const [inputHeight, setInputHeight] = useState(42);
   const [agentStatus, setAgentStatus] = useState<{ node: string; message: string } | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [mode, setMode] = useState<'quick' | 'detailed'>('quick');
@@ -202,11 +204,11 @@ export default function ChatScreen() {
 
   const floatingBaseBottom = Platform.OS === 'ios' ? 80 : 62;
   const keyboardGap = Platform.OS === 'ios' ? 8 : 42;
-  const headerMaxWidth = isDesktopWeb ? 1180 : isTabletWeb ? 920 : 780;
-  const contentMaxWidth = isDesktopWeb ? 1180 : isTabletWeb ? 920 : 760;
-  const composerMaxWidth = isDesktopWeb ? 960 : isTabletWeb ? 860 : 780;
-  const floatingBottom = isDesktopWeb ? 24 : floatingBaseBottom;
-  const chatBottomInset = isDesktopWeb ? 250 : isTabletWeb ? 228 : 215;
+  const headerMaxWidth = isDesktopWeb ? 1280 : isTabletWeb ? 920 : isMobileWeb ? 420 : 780;
+  const contentMaxWidth = isDesktopWeb ? 1280 : isTabletWeb ? 920 : isMobileWeb ? 420 : 760;
+  const composerMaxWidth = isDesktopWeb ? 960 : isTabletWeb ? 860 : isMobileWeb ? 420 : 780;
+  const floatingBottom = isDesktopWeb ? 24 : isMobileWeb ? 86 : floatingBaseBottom;
+  const chatBottomInset = isDesktopWeb ? 250 : isTabletWeb ? 228 : isMobileWeb ? 180 : 215;
 
   const bgCol = '#0A0A0C';
   const borderCol = 'rgba(255,255,255,0.08)';
@@ -214,6 +216,9 @@ export default function ChatScreen() {
   const subTextCol = '#A1A1AA';
   const botBubbleBg = 'rgba(24, 24, 28, 0.78)';
   const frostedBg = 'rgba(18, 18, 22, 0.9)';
+  const inputLineHeight = dynamicFontSize + 6;
+  const inputMinHeight = 42;
+  const inputMaxHeight = inputLineHeight * 5;
   const currentSessionTitle = useMemo(
     () => sessionList.find((session) => session.id === sessionId)?.title || '新的对话',
     [sessionId, sessionList]
@@ -224,6 +229,11 @@ export default function ChatScreen() {
     }
     return [{ id: sessionId, title: currentSessionTitle }, ...sessionList];
   }, [currentSessionTitle, sessionId, sessionList]);
+  const isWelcomeOnly =
+    messages.length === 1 &&
+    messages[0]?.id === 'welcome' &&
+    [WELCOME_TEXT, LOGIN_WELCOME_TEXT, HISTORY_ERROR_TEXT].includes(messages[0]?.text || '');
+  const showIntroHero = messages.length === 0 || isWelcomeOnly;
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
@@ -577,6 +587,14 @@ export default function ChatScreen() {
     }, 1000);
   }, [sheetAnim]);
 
+  const handleInputContentSizeChange = useCallback(
+    (event: any) => {
+      const contentHeight = Math.ceil(event?.nativeEvent?.contentSize?.height || inputMinHeight);
+      setInputHeight(Math.max(inputMinHeight, Math.min(inputMaxHeight, contentHeight)));
+    },
+    [inputMaxHeight, inputMinHeight]
+  );
+
   const handleScroll = useCallback(
     (event: any) => {
       if (isKeyboardVisible) return;
@@ -613,6 +631,7 @@ export default function ChatScreen() {
     const attachment = pendingAttachment;
     const localMessageId = Math.random().toString(36).slice(2);
     setInputText('');
+    setInputHeight(inputMinHeight);
     setPendingAttachment(null);
     setMessages((prev) => [
       ...prev,
@@ -759,7 +778,20 @@ export default function ChatScreen() {
         prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `?? ${message}` } : msg))
       );
     }
-  }, [inputText, pendingAttachment, isGenerating, sessionId, mode, useTrainingSheet, getValidToken, refreshSessions, formatProcessingMessage, scrollToBottom]);
+  }, [formatProcessingMessage, getValidToken, inputMinHeight, inputText, isGenerating, mode, pendingAttachment, refreshSessions, scrollToBottom, sessionId, useTrainingSheet]);
+
+  const handleWebInputKeyPress = useCallback(
+    (event: any) => {
+      if (Platform.OS !== 'web') {
+        return;
+      }
+      if (event?.nativeEvent?.key === 'Enter' && !event?.nativeEvent?.shiftKey) {
+        event.preventDefault?.();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
   useEffect(() => {
     if (!isLoggedIn) {
       resetPlan();
@@ -773,27 +805,14 @@ export default function ChatScreen() {
   }, [isLoggedIn, resetPlan, syncWorkoutOnLogin]);
 
   useEffect(() => {
-    navigation.setOptions({
-      tabBarStyle: {
-        backgroundColor: isDark ? 'rgba(20, 20, 26, 0.85)' : 'rgba(255, 255, 255, 0.88)',
-        borderTopWidth: 0.5,
-        borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-        shadowColor: 'transparent',
-        elevation: 0,
-        paddingBottom: Platform.OS === 'ios' ? 22 : 8,
-        paddingTop: 8,
-        height: Platform.OS === 'ios' ? 76 : 58,
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        transform: [{ translateY: tabBarTranslateAnim }],
-        ...(Platform.OS === 'web'
-          ? ({ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any)
-          : {}),
-      },
-    });
-  }, [isDark, navigation, tabBarTranslateAnim]);
+    // Web 端的 Tab 栏由 _layout.web.tsx 统一管理，这里不再覆盖 tabBarStyle
+    // 仅保留桌面端侧边栏的特殊处理
+    if (isDesktopWeb) {
+      navigation.setOptions({
+        tabBarStyle: { display: 'none' },
+      });
+    }
+  }, [isDark, isDesktopWeb, navigation]);
 
   useEffect(() => {
     Animated.timing(tabBarTranslateAnim, {
@@ -917,9 +936,9 @@ export default function ChatScreen() {
         style={[
           styles.header,
           {
-            paddingTop: Math.max(insets.top, 12),
-            paddingBottom: 24,
-            paddingHorizontal: isDesktopWeb ? 32 : 16,
+            paddingTop: isMobileWeb ? 18 : 20,
+            paddingBottom: isMobileWeb ? 18 : 24,
+            paddingHorizontal: isDesktopWeb ? 32 : isMobileWeb ? 12 : 16,
           },
         ]}
       >
@@ -934,20 +953,20 @@ export default function ChatScreen() {
               </Text>
             </View>
           </View>
-          <View style={styles.headerRight}>
+          <View style={[styles.headerRight, isMobileWeb ? { gap: 6 } : null]}>
             <TouchableOpacity
-              style={[styles.headerIconButton, { backgroundColor: frostedBg, borderColor: borderCol }]}
+              style={[styles.headerIconButton, isMobileWeb ? styles.headerIconButtonMobile : null, { backgroundColor: frostedBg, borderColor: borderCol }]}
               onPress={handleCreateSession}
               disabled={!isLoggedIn}
             >
-              <Ionicons name="add" size={18} color={isLoggedIn ? textCol : subTextCol} />
+              <Ionicons name="add" size={isMobileWeb ? 16 : 18} color={isLoggedIn ? textCol : subTextCol} />
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.headerIconButton, { backgroundColor: frostedBg, borderColor: borderCol }]}
+              style={[styles.headerIconButton, isMobileWeb ? styles.headerIconButtonMobile : null, { backgroundColor: frostedBg, borderColor: borderCol }]}
               onPress={handleOpenSessionModal}
               disabled={!isLoggedIn}
             >
-              <Ionicons name="layers-outline" size={17} color={isLoggedIn ? textCol : subTextCol} />
+              <Ionicons name="layers-outline" size={isMobileWeb ? 15 : 17} color={isLoggedIn ? textCol : subTextCol} />
             </TouchableOpacity>
           </View>
         </View>
@@ -961,7 +980,7 @@ export default function ChatScreen() {
             {
               backgroundColor: 'rgba(0,122,255,0.08)',
               borderBottomColor: borderCol,
-              paddingHorizontal: isDesktopWeb ? 32 : 20,
+              paddingHorizontal: isDesktopWeb ? 32 : isMobileWeb ? 12 : 20,
             },
           ]}
         >
@@ -980,7 +999,7 @@ export default function ChatScreen() {
         contentContainerStyle={[
           styles.chatContent,
           {
-            paddingTop: isDesktopWeb ? 152 : isTabletWeb ? 140 : 100,
+            paddingTop: isDesktopWeb ? 152 : isTabletWeb ? 140 : isMobileWeb ? 88 : 100,
             paddingBottom: chatBottomInset,
             paddingHorizontal: isDesktopWeb ? 32 : 16,
           },
@@ -1014,11 +1033,12 @@ export default function ChatScreen() {
               </View>
             </View>
           )}
-        <View style={[styles.chatMaxWidth, { maxWidth: isDesktopWeb ? 880 : 760 }]}>
-          {messages.length === 0 && (
+        <View style={[styles.chatMaxWidth, { maxWidth: isDesktopWeb ? 960 : '100%' }]}>
+          {showIntroHero && (
             <View
               style={[
                 styles.emptyChatHero,
+                isMobileWeb ? styles.emptyChatHeroMobile : null,
                 {
                   backgroundColor: 'rgba(24,24,28,0.9)',
                   borderColor: borderCol,
@@ -1026,8 +1046,8 @@ export default function ChatScreen() {
               ]}
             >
               <Text style={[styles.emptyChatEyebrow, { color: subTextCol }]}>VOLSHAPE COACH</Text>
-              <Text style={[styles.emptyChatTitle, { color: textCol }]}>从一句话开始今天的训练或饮食记录</Text>
-              <Text style={[styles.emptyChatDescription, { color: subTextCol }]}>
+              <Text style={[styles.emptyChatTitle, isMobileWeb ? styles.emptyChatTitleMobile : null, { color: textCol }]}>从一句话开始今天的训练或饮食记录</Text>
+              <Text style={[styles.emptyChatDescription, isMobileWeb ? styles.emptyChatDescriptionMobile : null, { color: subTextCol }]}>
                 你可以直接提训练目标、恢复状态、饮食照片，或者追问昨天的训练完成情况。专家模式下也支持图片与视频分析。
               </Text>
               <View style={styles.emptyChatSuggestionList}>
@@ -1051,7 +1071,7 @@ export default function ChatScreen() {
               </View>
             </View>
           )}
-          {messages.map((msg, index) => {
+          {!showIntroHero && messages.map((msg, index) => {
             const isStreamingPlaceholder = isGenerating && msg.isBot && messages[messages.length - 1]?.id === msg.id && !msg.text;
             return (
               <View
@@ -1146,12 +1166,12 @@ export default function ChatScreen() {
           styles.floatingControls,
           {
             bottom: floatingBottom,
-            width: composerMaxWidth,
-            maxWidth: composerMaxWidth,
+            width: isDesktopWeb ? 960 : undefined,
+            maxWidth: isDesktopWeb ? 960 : undefined,
             left: isDesktopWeb ? '50%' : 0,
             right: isDesktopWeb ? 'auto' : 0,
-            marginLeft: isDesktopWeb ? -(composerMaxWidth / 2) + 146 : 0,
-            paddingHorizontal: 0,
+            marginLeft: isDesktopWeb ? -480 : 0,
+            paddingHorizontal: isDesktopWeb ? 0 : 16,
             transform: [
               {
                 translateY: tabBarTranslateAnim.interpolate({
@@ -1336,7 +1356,15 @@ export default function ChatScreen() {
             </TouchableOpacity>
           )}
           <TextInput
-            style={[styles.textInput, { color: textCol, fontSize: dynamicFontSize }]}
+            style={[
+              styles.textInput,
+              {
+                color: textCol,
+                fontSize: dynamicFontSize,
+                lineHeight: inputLineHeight,
+                height: inputHeight,
+              },
+            ]}
             value={inputText}
             onChangeText={setInputText}
             placeholder="给 AI 教练发消息..."
@@ -1344,7 +1372,10 @@ export default function ChatScreen() {
             multiline
             maxLength={500}
             editable={!isGenerating}
+            scrollEnabled={inputHeight >= inputMaxHeight}
             onSubmitEditing={handleSend}
+            onContentSizeChange={handleInputContentSizeChange}
+            onKeyPress={handleWebInputKeyPress}
           />
           <TouchableOpacity
             activeOpacity={0.85}
@@ -1511,13 +1542,15 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   webPage: { width: '100%' },
   header: {
-    position: 'absolute',
+    position: 'fixed',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 10,
     paddingHorizontal: 16,
-  },
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+  } as any,
   headerFrame: {
     width: '100%',
     alignSelf: 'center',
@@ -1541,6 +1574,11 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerIconButtonMobile: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
   },
   statusBanner: {
     width: '100%',
@@ -1569,20 +1607,19 @@ const styles = StyleSheet.create({
     alignSelf: 'center',
   },
   chatBodyDesktop: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
+    alignItems: 'center',
     justifyContent: 'center',
-    gap: 32,
     width: '100%',
   },
   desktopRail: {
-    width: 260,
+    width: 208,
     borderWidth: 0.5,
     borderRadius: 24,
-    padding: 16,
-    gap: 12,
-    position: 'sticky',
-    top: 124,
+    padding: 14,
+    gap: 10,
+    position: 'fixed',
+    left: 8,
+    bottom: 32,
   } as any,
   desktopRailEyebrow: {
     fontSize: 11,
@@ -1590,18 +1627,18 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   desktopRailTitle: {
-    fontSize: 24,
+    fontSize: 18,
     fontWeight: '800',
-    lineHeight: 30,
+    lineHeight: 24,
   },
   desktopRailText: {
-    fontSize: 13,
-    lineHeight: 20,
+    fontSize: 12,
+    lineHeight: 18,
   },
   desktopRailCard: {
-    borderRadius: 18,
-    padding: 14,
-    gap: 6,
+    borderRadius: 16,
+    padding: 12,
+    gap: 5,
   },
   desktopRailCardLabel: {
     fontSize: 11,
@@ -1612,7 +1649,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 20,
   },
-  chatMaxWidth: { width: '100%', maxWidth: 760, gap: 18 },
+  chatMaxWidth: { width: '100%', maxWidth: 760, gap: 18, alignSelf: 'center' },
   emptyChatHero: {
     width: '100%',
     borderWidth: 0.5,
@@ -1620,6 +1657,10 @@ const styles = StyleSheet.create({
     padding: 24,
     gap: 14,
     marginBottom: 10,
+  },
+  emptyChatHeroMobile: {
+    padding: 20,
+    borderRadius: 24,
   },
   emptyChatEyebrow: {
     fontSize: 11,
@@ -1632,10 +1673,20 @@ const styles = StyleSheet.create({
     lineHeight: 36,
     maxWidth: 520,
   },
+  emptyChatTitleMobile: {
+    fontSize: 20,
+    lineHeight: 28,
+    maxWidth: '100%',
+  },
   emptyChatDescription: {
     fontSize: 14,
     lineHeight: 22,
     maxWidth: 620,
+  },
+  emptyChatDescriptionMobile: {
+    fontSize: 13,
+    lineHeight: 20,
+    maxWidth: '100%',
   },
   emptyChatSuggestionList: {
     gap: 10,
@@ -1701,7 +1752,7 @@ const styles = StyleSheet.create({
   processingLine: { minWidth: 220, flexDirection: 'row', alignItems: 'center' },
   processingText: { flex: 1, fontSize: 13, fontWeight: '600' },
   floatingControls: {
-    position: 'absolute',
+    position: 'fixed',
     left: 0,
     right: 0,
     zIndex: 20,
@@ -1711,7 +1762,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 6,
     gap: 8,
-  },
+  } as any,
   pendingAttachmentBar: {
     width: '100%',
     borderRadius: 18,
@@ -1807,9 +1858,11 @@ const styles = StyleSheet.create({
   },
   textInput: {
     flex: 1,
-    maxHeight: 120,
+    minHeight: 42,
     paddingVertical: 8,
     marginRight: 12,
+    overflow: 'hidden',
+    textAlignVertical: 'top',
     ...Platform.select({ web: { outlineStyle: 'none' } }),
   } as any,
   sendButton: {
@@ -1937,4 +1990,3 @@ const styles = StyleSheet.create({
   },
   sessionActionText: { fontSize: 14, fontWeight: '600' },
 });
-

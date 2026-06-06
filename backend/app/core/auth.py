@@ -51,6 +51,23 @@ def hash_token(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def _decode_access_token(token: str) -> str:
+    try:
+        payload = jwt.decode(token, settings.AUTH_JWT_SECRET, algorithms=[ALGORITHM])
+        if payload.get("type") != "access":
+            raise JWTError("invalid token type")
+        user_id = payload.get("sub")
+        if not user_id:
+            raise JWTError("missing subject")
+        return user_id
+    except JWTError as e:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"无效或已过期的登录凭证: {str(e)}",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
 def create_access_token(user_id: str, role: str = "user") -> str:
     expires = _utcnow() + datetime.timedelta(minutes=settings.AUTH_ACCESS_TOKEN_EXPIRE_MINUTES)
     payload = {"sub": user_id, "role": role, "type": "access", "exp": expires}
@@ -123,8 +140,6 @@ async def get_current_user(
 ) -> AppUser:
     token = credentials.credentials
 
-    # Development-only bridge for older local tests and seed accounts. Production
-    # must use VolShape access JWTs.
     if settings.ENV == "development" and token.startswith("test-user-"):
         email = f"{token}@dev.local"
         result = await db.execute(select(AppUser).where(AppUser.id == token))
@@ -137,24 +152,17 @@ async def get_current_user(
             await db.commit()
         return user
 
-    try:
-        payload = jwt.decode(token, settings.AUTH_JWT_SECRET, algorithms=[ALGORITHM])
-        if payload.get("type") != "access":
-            raise JWTError("invalid token type")
-        user_id = payload.get("sub")
-        if not user_id:
-            raise JWTError("missing subject")
-    except JWTError as e:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"无效或已过期的登录凭证: {str(e)}",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
+    user_id = _decode_access_token(token)
     user = await db.get(AppUser, user_id)
     if not user or user.status != "active":
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="账号不存在或已被禁用")
     return user
+
+
+def get_current_user_id_from_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+) -> str:
+    return _decode_access_token(credentials.credentials)
 
 
 async def get_current_user_id(user: AppUser = Depends(get_current_user)) -> str:

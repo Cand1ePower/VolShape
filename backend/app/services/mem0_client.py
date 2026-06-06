@@ -2,6 +2,7 @@ import os
 from mem0 import Memory
 from app.core.config import settings
 import logging
+import inspect
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,27 @@ def get_mem0_client() -> Memory:
 # Create a singleton instance
 memory_client = get_mem0_client()
 
+
+def _supports_kwarg(method, name: str) -> bool:
+    try:
+        return name in inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def _build_mem0_kwargs(method, *, user_id: str, limit: int | None = None):
+    kwargs = {}
+    if _supports_kwarg(method, "user_id"):
+        kwargs["user_id"] = user_id
+    if _supports_kwarg(method, "filters"):
+        kwargs["filters"] = {"user_id": user_id}
+    if limit is not None:
+        if _supports_kwarg(method, "limit"):
+            kwargs["limit"] = limit
+        elif _supports_kwarg(method, "top_k"):
+            kwargs["top_k"] = limit
+    return kwargs
+
 async def add_memory_async(messages: list, user_id: str):
     """
     Asynchronously adds memory. Uses run_in_executor to avoid blocking event loop.
@@ -66,7 +88,7 @@ async def add_memory_async(messages: list, user_id: str):
     from functools import partial
     try:
         loop = asyncio.get_running_loop()
-        func = partial(memory_client.add, messages, user_id=user_id)
+        func = partial(memory_client.add, messages, **_build_mem0_kwargs(memory_client.add, user_id=user_id))
         await loop.run_in_executor(None, func)
     except Exception as e:
         logger.error(f"Failed to add memory: {e}")
@@ -79,7 +101,8 @@ async def search_memory_async(query: str, user_id: str, limit: int = 10) -> str:
     from functools import partial
     try:
         loop = asyncio.get_running_loop()
-        func = partial(memory_client.search, query, filters={"user_id": user_id}, top_k=limit)
+        kwargs = _build_mem0_kwargs(memory_client.search, user_id=user_id, limit=limit)
+        func = partial(memory_client.search, query, **kwargs)
         res_dict = await loop.run_in_executor(None, func)
         
         results = res_dict.get("results", []) if res_dict else []
@@ -102,10 +125,10 @@ async def get_all_memory_async(user_id: str) -> list:
     from functools import partial
     try:
         loop = asyncio.get_running_loop()
-        func = partial(memory_client.get_all, filters={"user_id": user_id}, top_k=100)
+        kwargs = _build_mem0_kwargs(memory_client.get_all, user_id=user_id, limit=100)
+        func = partial(memory_client.get_all, **kwargs)
         res_dict = await loop.run_in_executor(None, func)
         return res_dict.get("results", []) if res_dict else []
     except Exception as e:
         logger.error(f"Failed to get all memory: {e}")
         return []
-

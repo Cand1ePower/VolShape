@@ -46,9 +46,10 @@ def create_trace(
         return None, None
 
     try:
-        trace = lf.start_observation(
+        trace = lf.trace(
             name=f"volshape_chat_{mode}",
-            as_type="span",
+            user_id=user_id,
+            session_id=session_id,
             input={"user_input": user_input, "mode": mode},
             metadata={"mode": mode, "session_id": session_id, "user_id": user_id},
         )
@@ -98,12 +99,19 @@ class NodeSpan:
     def __enter__(self):
         if self._trace is not None:
             try:
-                self._span = self._trace.start_observation(
-                    name=self._node_name,
-                    as_type="span",
-                    input=self._input_data,
-                    metadata=self._metadata,
-                )
+                if hasattr(self._trace, "span"):
+                    self._span = self._trace.span(
+                        name=self._node_name,
+                        input=self._input_data,
+                        metadata=self._metadata,
+                    )
+                elif hasattr(self._trace, "start_observation"):
+                    self._span = self._trace.start_observation(
+                        name=self._node_name,
+                        as_type="span",
+                        input=self._input_data,
+                        metadata=self._metadata,
+                    )
             except Exception as exc:
                 print(f"[Langfuse] span({self._node_name}) start failed: {exc}")
         return self

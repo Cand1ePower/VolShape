@@ -87,6 +87,12 @@ const WELCOME_TEXT = '你好，我是 VolShape AI 教练。告诉我你的训练
 const LOGIN_WELCOME_TEXT = '你好，我是 VolShape AI 教练。请先登录后再继续使用。';
 const HISTORY_ERROR_TEXT = '你好，我是 VolShape AI 教练。当前聊天记录加载失败，请稍后重试。';
 
+const CHAT_PROMPT_SUGGESTIONS = [
+  '根据我的目标生成今天的训练计划',
+  '这是我今天的晚饭，帮我估算热量和三大营养',
+  '我昨天做了哪些训练，实际完成了多少组？',
+];
+
 function parseInlineBold(text: string) {
   const parts: Array<{ text: string; bold: boolean }> = [];
   const regex = /\*\*(.+?)\*\*/g;
@@ -952,6 +958,42 @@ export default function ChatScreen() {
         onContentSizeChange={() => scrollToBottom(true)}
       >
         <View style={styles.chatMaxWidth}>
+          {(messages.length === 0 || (messages.length === 1 && messages[0]?.id === 'welcome')) && (
+            <View
+              style={[
+                styles.emptyChatHero,
+                {
+                  backgroundColor: botBubbleBg,
+                  borderColor: borderCol,
+                },
+              ]}
+            >
+              <Text style={[styles.emptyChatEyebrow, { color: subTextCol }]}>VOLSHAPE COACH</Text>
+              <Text style={[styles.emptyChatTitle, { color: textCol }]}>从一句话开始今天的训练或饮食记录</Text>
+              <Text style={[styles.emptyChatDescription, { color: subTextCol }]}>
+                你可以直接提训练目标、恢复状态、饮食照片，或者追问昨天的训练完成情况。专家模式下也支持图片与视频分析。
+              </Text>
+              <View style={styles.emptyChatSuggestionList}>
+                {CHAT_PROMPT_SUGGESTIONS.map((suggestion) => (
+                  <TouchableOpacity
+                    key={suggestion}
+                    activeOpacity={0.82}
+                    style={[
+                      styles.emptyChatSuggestion,
+                      {
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                        borderColor: borderCol,
+                      },
+                    ]}
+                    onPress={() => setInputText(suggestion)}
+                  >
+                    <Text style={[styles.emptyChatSuggestionText, { color: textCol }]}>{suggestion}</Text>
+                    <Ionicons name="arrow-up-outline" size={16} color={subTextCol} />
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          )}
           {messages.map((msg, index) => {
             const isStreamingPlaceholder = isGenerating && msg.isBot && messages[messages.length - 1]?.id === msg.id && !msg.text;
             return (
@@ -1456,6 +1498,48 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
   },
   chatMaxWidth: { width: '100%', maxWidth: 760, gap: 18 },
+  emptyChatHero: {
+    width: '100%',
+    borderWidth: 0.5,
+    borderRadius: 28,
+    padding: 22,
+    gap: 14,
+    marginBottom: 10,
+  },
+  emptyChatEyebrow: {
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  emptyChatTitle: {
+    fontSize: 26,
+    fontWeight: '800',
+    lineHeight: 34,
+  },
+  emptyChatDescription: {
+    fontSize: 14,
+    lineHeight: 22,
+  },
+  emptyChatSuggestionList: {
+    gap: 10,
+    marginTop: 6,
+  },
+  emptyChatSuggestion: {
+    borderWidth: 0.5,
+    borderRadius: 18,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 16,
+  },
+  emptyChatSuggestionText: {
+    flex: 1,
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 20,
+  },
   messageRow: { width: '100%', flexDirection: 'row', marginVertical: 4 },
   botRow: { justifyContent: 'flex-start', paddingRight: 40 },
   userRow: { justifyContent: 'flex-end', paddingLeft: 40 },
@@ -1736,4 +1820,3 @@ const styles = StyleSheet.create({
   },
   sessionActionText: { fontSize: 14, fontWeight: '600' },
 });
-

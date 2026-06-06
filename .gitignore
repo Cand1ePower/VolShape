@@ -45,6 +45,10 @@ Thumbs.db
 skills-lock.json
 volshape-web-dist.tar
 
+deploy.sh
+*.pem
+*.key
+
 # Local runtime logs
 backend/*.log
 frontend/*.log

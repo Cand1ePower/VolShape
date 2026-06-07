@@ -10,6 +10,7 @@ from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.core.config import settings
 
 
 # ---------------------------------------------------------------------------
@@ -49,26 +50,31 @@ class VisionAdapter(BaseAdapter):
         from app.services.llm_client import llm_call_messages_structured
 
         image_bytes: bytes = payload["image_bytes"]
+        mime_type: str = payload.get("mime_type", "image/jpeg")
         user_prompt: str = payload.get("user_prompt", "请识别图片中的食物和估计份量。")
         user_id: Optional[str] = kwargs.get("user_id")
         db: Optional[AsyncSession] = kwargs.get("db")
         session_id: Optional[str] = kwargs.get("session_id")
 
         b64 = base64.b64encode(image_bytes).decode("utf-8")
+        from app.services.media_analysis import FOOD_IMAGE_ANALYSIS_SYSTEM
+
         messages = [
+            {
+                "role": "system",
+                "content": FOOD_IMAGE_ANALYSIS_SYSTEM,
+            },
             {
                 "role": "user",
                 "content": [
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64}"}},
                     {"type": "text", "text": user_prompt},
                 ],
             }
         ]
 
-        from app.services.media_analysis import FOOD_IMAGE_ANALYSIS_SYSTEM
-
         result = await llm_call_messages_structured(
-            system_prompt=FOOD_IMAGE_ANALYSIS_SYSTEM,
+            model=settings.LLM_VISION_MODEL,
             messages=messages,
             temperature=0.2,
             max_tokens=1024,

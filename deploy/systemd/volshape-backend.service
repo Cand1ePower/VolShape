@@ -7,6 +7,12 @@ Type=simple
 User=ubuntu
 WorkingDirectory=/opt/volshape/backend
 EnvironmentFile=/opt/volshape/backend/.env
+# Optional: route outbound model traffic through a local Clash proxy when
+# direct access to providers such as Jina is blocked by the server network.
+Environment=HTTP_PROXY=http://127.0.0.1:7890
+Environment=HTTPS_PROXY=http://127.0.0.1:7890
+Environment=ALL_PROXY=http://127.0.0.1:7890
+Environment=NO_PROXY=127.0.0.1,localhost
 ExecStart=/opt/volshape/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers
 Restart=always
 RestartSec=5

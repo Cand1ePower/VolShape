@@ -11,6 +11,10 @@ backend/.env.*
 !backend/.env.example
 backend/*.egg-info/
 backend/data/
+data/
+backend/test_mem0.py
+frontend/dist-recover/
+frontend/dist/
 *.py[cod]
 
 # ── Frontend ──

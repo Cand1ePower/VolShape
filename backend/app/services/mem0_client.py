@@ -7,7 +7,6 @@ import inspect
 logger = logging.getLogger(__name__)
 
 def get_mem0_client() -> Memory:
-    # Build mem0 config
     config = {
         "llm": {
             "provider": "openai",
@@ -28,7 +27,6 @@ def get_mem0_client() -> Memory:
         }
     }
 
-    # Use embedding config if provided
     if settings.EMBEDDING_API_KEY and settings.EMBEDDING_BASE_URL and settings.EMBEDDING_MODEL:
         config["embedder"] = {
             "provider": "openai",
@@ -40,14 +38,12 @@ def get_mem0_client() -> Memory:
             }
         }
     else:
-        # Default to huggingface or something local if supported by mem0
         config["embedder"] = {
             "provider": "huggingface",
             "config": {
                 "model": "sentence-transformers/all-MiniLM-L6-v2"
             }
         }
-
     try:
         mem = Memory.from_config(config)
         return mem
@@ -55,8 +51,14 @@ def get_mem0_client() -> Memory:
         logger.error(f"Failed to initialize Mem0 client: {e}")
         raise e
 
-# Create a singleton instance
-memory_client = get_mem0_client()
+_memory_client: Memory | None = None
+
+
+def get_memory_client() -> Memory:
+    global _memory_client
+    if _memory_client is None:
+        _memory_client = get_mem0_client()
+    return _memory_client
 
 
 def _supports_kwarg(method, name: str) -> bool:
@@ -79,7 +81,7 @@ def _build_mem0_kwargs(method, *, user_id: str, limit: int | None = None):
             kwargs["top_k"] = limit
     return kwargs
 
-async def add_memory_async(messages: list, user_id: str):
+async def add_memory_async(messages: list, user_id: str, *, infer: bool = False):
     """
     Asynchronously adds memory. Uses run_in_executor to avoid blocking event loop.
     messages: list of dict e.g. [{"role": "user", "content": "..."}]
@@ -88,8 +90,13 @@ async def add_memory_async(messages: list, user_id: str):
     from functools import partial
     try:
         loop = asyncio.get_running_loop()
-        func = partial(memory_client.add, messages, **_build_mem0_kwargs(memory_client.add, user_id=user_id))
-        await loop.run_in_executor(None, func)
+        memory_client = get_memory_client()
+        kwargs = _build_mem0_kwargs(memory_client.add, user_id=user_id)
+        kwargs["infer"] = infer
+        func = partial(memory_client.add, messages, **kwargs)
+        result = await loop.run_in_executor(None, func)
+        if not infer and not (result or {}).get("results"):
+            logger.warning("Mem0 add returned no results for user %s with infer=%s", user_id, infer)
     except Exception as e:
         logger.error(f"Failed to add memory: {e}")
 
@@ -101,6 +108,7 @@ async def search_memory_async(query: str, user_id: str, limit: int = 10) -> str:
     from functools import partial
     try:
         loop = asyncio.get_running_loop()
+        memory_client = get_memory_client()
         kwargs = _build_mem0_kwargs(memory_client.search, user_id=user_id, limit=limit)
         func = partial(memory_client.search, query, **kwargs)
         res_dict = await loop.run_in_executor(None, func)
@@ -125,6 +133,7 @@ async def get_all_memory_async(user_id: str) -> list:
     from functools import partial
     try:
         loop = asyncio.get_running_loop()
+        memory_client = get_memory_client()
         kwargs = _build_mem0_kwargs(memory_client.get_all, user_id=user_id, limit=100)
         func = partial(memory_client.get_all, **kwargs)
         res_dict = await loop.run_in_executor(None, func)

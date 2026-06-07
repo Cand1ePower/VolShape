@@ -516,16 +516,20 @@ async def analyze_food_image(
     plan = CapabilityPlanFactory.build(Capability.NUTRITION_PHOTO)
 
     # 将原始输入打包成 payload 传入 Plan
-    payload = await plan.execute(
-        {
-            "image_bytes": image_bytes,
-            "mime_type": mime_type,
-            "user_prompt": user_input,
-        },
-        user_id=user_id,
-        db=db,
-        session_id=session_id,
-    )
+    try:
+        payload = await plan.execute(
+            {
+                "image_bytes": image_bytes,
+                "mime_type": mime_type,
+                "user_prompt": user_input,
+            },
+            user_id=user_id,
+            db=db,
+            session_id=session_id,
+        )
+    except Exception as exc:
+        print(f"[media_analysis] MCP nutrition_photo detect failed, falling back to direct vision client: {exc}")
+        payload = {}
 
     # 如果 MCP Vision 成功，使用其结果；否则回退到原始实现
     vision_result = payload if payload.get("items") else None

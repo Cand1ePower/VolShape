@@ -59,6 +59,11 @@ const REFRESH_KEY = 'volshape_refresh_token';
 const SESSION_KEY = 'volshape_session_id';
 
 let memoryStorage: Record<string, string | null> = {};
+let nativeStoragePromise: Promise<{
+  getItem: (key: string) => Promise<string | null>;
+  setItem: (key: string, value: string) => Promise<void>;
+  removeItem: (key: string) => Promise<void>;
+}> | null = null;
 
 function getScopedSessionKey(userId?: string | null) {
   return userId ? `${SESSION_KEY}:${userId}` : SESSION_KEY;
@@ -97,26 +102,42 @@ async function getStorage() {
       },
     };
   }
-  try {
-    const SecureStore = require('expo-secure-store');
-    return {
-      getItem: (key: string) => SecureStore.getItemAsync(key),
-      setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
-      removeItem: (key: string) => SecureStore.deleteItemAsync(key),
-    };
-  } catch {
-    return {
-      getItem: (key: string) => Promise.resolve(memoryStorage[key] ?? null),
-      setItem: (key: string, value: string) => {
-        memoryStorage[key] = value;
-        return Promise.resolve();
-      },
-      removeItem: (key: string) => {
-        memoryStorage[key] = null;
-        return Promise.resolve();
-      },
-    };
+
+  if (!nativeStoragePromise) {
+    nativeStoragePromise = (async () => {
+      try {
+        const SecureStore = require('expo-secure-store');
+        return {
+          getItem: (key: string) => SecureStore.getItemAsync(key),
+          setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
+          removeItem: (key: string) => SecureStore.deleteItemAsync(key),
+        };
+      } catch {
+        try {
+          const AsyncStorage = require('@react-native-async-storage/async-storage').default;
+          return {
+            getItem: (key: string) => AsyncStorage.getItem(key),
+            setItem: (key: string, value: string) => AsyncStorage.setItem(key, value),
+            removeItem: (key: string) => AsyncStorage.removeItem(key),
+          };
+        } catch {
+          return {
+            getItem: (key: string) => Promise.resolve(memoryStorage[key] ?? null),
+            setItem: (key: string, value: string) => {
+              memoryStorage[key] = value;
+              return Promise.resolve();
+            },
+            removeItem: (key: string) => {
+              memoryStorage[key] = null;
+              return Promise.resolve();
+            },
+          };
+        }
+      }
+    })();
   }
+
+  return nativeStoragePromise;
 }
 
 function stateFromAuthPayload(payload: any, refreshToken: string | null, sessionId: string | null): AuthState {

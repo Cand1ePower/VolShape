@@ -26,6 +26,8 @@ frontend/.claude/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+frontend/get_crash_log.ps1
+frontend/platform-tools/
 
 # ── IDE ──
 .vscode/

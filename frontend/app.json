@@ -1,6 +1,6 @@
 {
   "expo": {
-    "name": "frontend",
+    "name": "VolShape",
     "slug": "frontend",
     "version": "1.0.0",
     "orientation": "portrait",
@@ -12,6 +12,7 @@
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.candlepower.volshape",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -37,12 +38,17 @@
           }
         }
       ],
-      "expo-sqlite"
+      "expo-sqlite",
+      "expo-image"
     ],
     "experiments": {
-      "baseUrl": "/app",
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "16423a61-595f-452d-9279-484ac23be480"
+      }
     }
   }
 }

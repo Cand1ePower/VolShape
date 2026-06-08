@@ -20,6 +20,7 @@ def _newapi_env(name: str, default: str = "") -> str:
 
 class Settings:
     ENV: str = _env("ENV", "development")
+    SQL_ECHO: bool = _env("SQL_ECHO", "0") == "1"
     DATABASE_URL: str = _env("DATABASE_URL", "postgresql+asyncpg://postgres:localpassword123@localhost:5432/volshape")
     REDIS_URL: str = _env("REDIS_URL", "redis://localhost:6379/0")
     CORS_ORIGINS: str = _env(

@@ -34,6 +34,23 @@ from app.api.sessions import (
 router = APIRouter()
 
 
+def _log_chat(message: str) -> None:
+    print(f"[chat] {message}", flush=True)
+
+
+def _short_id(value: str | None) -> str:
+    if not value:
+        return "-"
+    return value[:8]
+
+
+def _preview_text(value: str | None, limit: int = 120) -> str:
+    if not value:
+        return ""
+    snippet = value[:limit]
+    return snippet.encode("unicode_escape", errors="backslashreplace").decode("ascii")
+
+
 # ---------------------------------------------------------------------------
 # Request schema
 # ---------------------------------------------------------------------------
@@ -48,6 +65,7 @@ class ChatRequest(BaseModel):
 # SSE node status messages
 # ---------------------------------------------------------------------------
 NODE_MESSAGE_MAP = {
+    "knowledge_retrieval": "Retrieving expert knowledge...",
     "intent_classifier": "正在分析用户意图...",
     "profile_retrieval": "正在同步用户画像...",
     "planner": "正在制定训练策略...",
@@ -80,6 +98,10 @@ async def _live_agent_stream_with_db(
     db: AsyncSession,
     use_training_sheet: bool = False,
 ):
+    _log_chat(
+        f"stream_start user={_short_id(user_id)} session={_short_id(session_id)} mode={mode} "
+        f"use_training_sheet={use_training_sheet} user_input=\"{_preview_text(user_input)}\""
+    )
     history = await load_history(user_id, session_id, db)
 
     initial_state = {
@@ -96,6 +118,8 @@ async def _live_agent_stream_with_db(
         "plan_steps": [],
         "execution_results": {},
         "tavily_results": [],
+        "rag_context": "",
+        "rag_hit_count": 0,
         "reflection_result": {},
         "error_count": 0,
         "corrector_feedback": "",
@@ -118,10 +142,10 @@ async def _live_agent_stream_with_db(
 
     if should_capture_long_term_memory(user_input):
         try:
-            from app.services.mem0_client import add_memory_async, search_memory_async
+            from app.services.mem0_client import search_memory_async
 
-            asyncio.create_task(add_memory_async([{"role": "user", "content": user_input}], user_id))
             initial_state["mem0_context"] = await search_memory_async(user_input, user_id)
+            _log_chat(f"mem0_context_loaded lines={len((initial_state['mem0_context'] or '').splitlines())}")
         except Exception as exc:
             print(f"[mem0 Error] {exc}")
 
@@ -129,6 +153,7 @@ async def _live_agent_stream_with_db(
         async for chunk in app_workflow.astream(initial_state, config=config):
             for node_name, updates in chunk.items():
                 final_state_snapshot.update(updates)
+                _log_chat(f"node={node_name} keys={sorted(list(updates.keys()))}")
                 message = NODE_MESSAGE_MAP.get(node_name, f"正在执行 {node_name}...")
                 yield {
                     "data": json.dumps({"event": "state", "data": {"node": node_name.replace("_", " ").title(), "message": message}}),
@@ -136,6 +161,11 @@ async def _live_agent_stream_with_db(
 
         final_text = final_state_snapshot.get("final_response", "已完成处理。")
         ui_card = final_state_snapshot.get("ui_components")
+        _log_chat(
+            f"stream_done session={_short_id(session_id)} intent={final_state_snapshot.get('intent')} "
+            f"rag_hit_count={final_state_snapshot.get('rag_hit_count', 0)} "
+            f"final_response_len={len(final_text)} has_ui_card={ui_card is not None}"
+        )
 
         await save_message(user_id, session_id, "assistant", final_text, db, custom_card=ui_card)
 
@@ -170,6 +200,7 @@ async def _live_agent_stream_with_db(
         yield {"data": json.dumps({"event": "done"})}
 
     except Exception as exc:
+        _log_chat(f"stream_error session={_short_id(session_id)} error={exc}")
         payload = error_payload(exc)
         try:
             await db.rollback()
@@ -211,10 +242,16 @@ async def chat_stream(
     request: ChatRequest,
     user_id: str = Depends(get_current_user_id_from_token),
 ):
+    _log_chat(
+        f"request_received user={_short_id(user_id)} requested_session={_short_id(request.session_id)} "
+        f"mode={request.mode or 'quick'} use_training_sheet={request.use_training_sheet or False} "
+        f"user_input=\"{_preview_text(request.user_input)}\""
+    )
     async with AsyncSessionLocal() as db:
         await QuotaService.assert_can_chat(user_id, db, request.mode or "quick")
         await QuotaService.increment_message(user_id, db)
         session_id = await resolve_session_id(user_id, request.session_id, db, allow_create=True)
+        _log_chat(f"session_resolved user={_short_id(user_id)} resolved_session={_short_id(session_id)}")
     return EventSourceResponse(
         live_agent_stream(
             request.user_input,

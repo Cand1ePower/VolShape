@@ -65,8 +65,13 @@ let nativeStoragePromise: Promise<{
   removeItem: (key: string) => Promise<void>;
 }> | null = null;
 
+function sanitizeNativeStorageKey(key: string) {
+  const normalized = key.trim().replace(/[^0-9A-Za-z._-]/g, '_');
+  return normalized || 'volshape_storage_key';
+}
+
 function getScopedSessionKey(userId?: string | null) {
-  return userId ? `${SESSION_KEY}:${userId}` : SESSION_KEY;
+  return userId ? `${SESSION_KEY}.${userId}` : SESSION_KEY;
 }
 
 function isJwtExpiringSoon(token: string | null, bufferSeconds = 60) {
@@ -108,9 +113,9 @@ async function getStorage() {
       try {
         const SecureStore = require('expo-secure-store');
         return {
-          getItem: (key: string) => SecureStore.getItemAsync(key),
-          setItem: (key: string, value: string) => SecureStore.setItemAsync(key, value),
-          removeItem: (key: string) => SecureStore.deleteItemAsync(key),
+          getItem: (key: string) => SecureStore.getItemAsync(sanitizeNativeStorageKey(key)),
+          setItem: (key: string, value: string) => SecureStore.setItemAsync(sanitizeNativeStorageKey(key), value),
+          removeItem: (key: string) => SecureStore.deleteItemAsync(sanitizeNativeStorageKey(key)),
         };
       } catch {
         try {
@@ -181,6 +186,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } else {
       await storage.removeItem(SESSION_KEY);
+      if (userId) {
+        await storage.removeItem(getScopedSessionKey(userId));
+      }
     }
   }, []);
 

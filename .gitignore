@@ -11,6 +11,7 @@ backend/.env.*
 !backend/.env.example
 backend/*.egg-info/
 backend/data/
+backend/tests
 data/
 backend/test_mem0.py
 frontend/dist-recover/
@@ -39,7 +40,7 @@ frontend/platform-tools/
 *.swp
 *.swo
 .claude/
-docs
+docs/
 
 # ── OS ──
 .DS_Store
@@ -63,3 +64,7 @@ frontend/*.log
 
 # Local eval outputs
 backend/evals/reports/
+
+
+# Local RAG source corpus and parsed PDFs
+ragdata/

@@ -11,6 +11,9 @@ from app.services.llm_client import llm_call_structured
 from app.services.errors import LLMGatewayError
 from app.services.tracing import NodeSpan, get_trace_from_config
 from app.services.tavily_search import search_exercise_info
+from app.services.rag.config import get_rag_settings
+from app.services.rag.knowledge_base import get_runtime_knowledge_base
+from app.services.rag.types import RagQuery
 from app.database.models import UserMetrics
 from app.core.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +29,21 @@ from app.prompts import (
 from sqlalchemy import select, desc
 
 MAX_CORRECTION_LOOPS = 1
+
+
+def _log_workflow(message: str) -> None:
+    print(f"[workflow] {message}", flush=True)
+
+
+def _preview_text(value: str | None, limit: int = 120) -> str:
+    if not value:
+        return ""
+    snippet = value[:limit]
+    return snippet.encode("unicode_escape", errors="backslashreplace").decode("ascii")
+
+
+def _safe_text(value: str | None, limit: int = 80) -> str:
+    return _preview_text(value, limit=limit)
 
 
 def _format_profile_for_prompt(profile: dict, mem0_context: str = "") -> str:
@@ -181,6 +199,7 @@ def _build_prompt_context(
     user_input: str,
     history_text: str = "",
     current_plan_text: str = "",
+    rag_context: str = "",
 ) -> str:
     sections = [f"[Agent任务]\n{agent_instruction}\n[Agent任务结束]"]
 
@@ -203,6 +222,9 @@ def _build_prompt_context(
     if current_plan_text:
         sections.append(f"[当前提取/生成的训练计划]\n{current_plan_text}\n[当前提取/生成的训练计划结束]")
 
+    if rag_context:
+        sections.append(rag_context.strip())
+
     conflict_resolution = """[记忆冲突处理规则]
 当收到的结构化数据与非结构化语义记忆(Mem0)发生冲突时，必须遵守以下优先级：
 1. 最高优先级：[用户这次的真实输入]
@@ -213,6 +235,16 @@ def _build_prompt_context(
 
     sections.append(f"[用户这次的真实输入]\n{user_input}\n[用户这次的真实输入结束]")
     return "\n\n".join(section for section in sections if section)
+
+
+def _is_expert_mode(mode: str | None) -> bool:
+    return (mode or "").strip().lower() in {"detailed", "expert"}
+
+
+def _should_use_rag(state: AgentState) -> bool:
+    if not _is_expert_mode(state.get("mode")):
+        return False
+    return state.get("intent") in {"training_plan", "chat", "diet_log"}
 
 async def _save_training_plan(user_id: str, plan_json: dict, db: AsyncSession) -> str:
     from app.database.models import TrainingPlan
@@ -368,6 +400,65 @@ async def profile_retrieval_node(state: AgentState, config: RunnableConfig) -> D
     return {"user_profile": profile, "recent_events": recent, "mem0_context": state.get("mem0_context", "")}
 
 
+async def knowledge_retrieval_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
+    trace = get_trace_from_config(config)
+    user_input = state.get("user_input", "")
+    mode = state.get("mode", "quick")
+    intent = state.get("intent", "chat")
+
+    with NodeSpan(
+        trace, "knowledge_retrieval",
+        input_data={
+            "user_input": user_input,
+            "mode": mode,
+            "intent": intent,
+        },
+        metadata={"node_order": 3, "mode": mode},
+    ) as span:
+        if not _should_use_rag(state):
+            reason = "mode_not_expert" if not _is_expert_mode(mode) else f"unsupported_intent:{intent}"
+            _log_workflow(
+                f"rag_skipped mode={mode} intent={intent} reason={reason} "
+                f"user_input=\"{_preview_text(user_input)}\""
+            )
+            span.set_output({"enabled": False, "reason": reason})
+            return {"rag_context": "", "rag_hit_count": 0}
+
+        settings = get_rag_settings()
+        _log_workflow(
+            f"rag_start mode={mode} intent={intent} collection={settings.collection_name} "
+            f"artifact={settings.runtime_artifact_path} user_input=\"{_preview_text(user_input)}\""
+        )
+        knowledge_base = get_runtime_knowledge_base(settings)
+        pack = await knowledge_base.retrieve(RagQuery(query=user_input, intent=intent))
+        hit_summaries = [
+            {
+                "rank": hit.rank,
+                "source": hit.source,
+                "title": _safe_text(hit.chunk.title),
+                "heading": _safe_text(" > ".join(hit.chunk.heading_path[:3])),
+                "source_type": hit.chunk.source_type.value,
+                "score": round(hit.score, 4),
+            }
+            for hit in pack.hits
+        ]
+        _log_workflow(
+            f"rag_done hit_count={len(pack.hits)} token_estimate={pack.token_estimate} hits={hit_summaries}"
+        )
+        span.set_output(
+            {
+                "enabled": True,
+                "artifact_path": str(settings.runtime_artifact_path),
+                "hit_count": len(pack.hits),
+                "token_estimate": pack.token_estimate,
+            }
+        )
+        return {
+            "rag_context": pack.to_prompt_block(),
+            "rag_hit_count": len(pack.hits),
+        }
+
+
 # 3. Planner
 async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, Any]:
     db = config["configurable"]["db"]
@@ -375,6 +466,7 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
     mem0_context = state.get("mem0_context", "")
+    rag_context = state.get("rag_context", "")
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
     recent_events = state.get("recent_events", [])
@@ -393,12 +485,13 @@ async def planner_node(state: AgentState, config: RunnableConfig) -> Dict[str, A
         result = await _safe_llm_structured(
             system_prompt=PLANNER_SYSTEM,
             user_prompt=_build_prompt_context(
-                agent_instruction="请先判断用户当前需求，再基于长期记忆、近期训练和当前时间制定本次训练策略框架。",
+                agent_instruction="请先判断用户当前需求，再基于长期记忆、近期训练、运动科学依据和当前时间制定本次训练策略框架。",
                 user_profile=user_profile,
                 mem0_context=mem0_context,
                 recent_events=recent_events,
                 history_text=history_text,
                 user_input=user_input,
+                rag_context=rag_context,
             ),
             temperature=0.4,
             fallback={"plan_steps": [
@@ -519,6 +612,7 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
     plan_steps = state.get("plan_steps", [])
     error_count = state.get("error_count", 0)
     corrector_feedback = state.get("corrector_feedback", "")
+    rag_context = state.get("rag_context", "")
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
     recent_events = state.get("recent_events", [])
@@ -535,13 +629,14 @@ async def executor_node(state: AgentState, config: RunnableConfig) -> Dict[str, 
 
     sys = EXECUTOR_CORRECTION_SYSTEM if error_count > 0 else EXECUTOR_SYSTEM
     user_msg = _build_prompt_context(
-        agent_instruction=f"请把训练策略细化为可执行动作清单。PR记录: {pr_text}",
+        agent_instruction=f"请把训练策略细化为可执行动作清单，并优先参考运动科学依据。PR记录: {pr_text}",
         user_profile=user_profile,
         mem0_context=state.get("mem0_context", ""),
         recent_events=recent_events,
         history_text=history_text,
         current_plan_text=json.dumps(plan_steps, ensure_ascii=False),
         user_input=state.get("user_input", ""),
+        rag_context=rag_context,
     )
     if error_count > 0:
         user_msg += f"\n第 {error_count + 1} 次修正。修正指令: {corrector_feedback}"
@@ -635,6 +730,7 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
     exercises = execution_results.get("exercises", [])
     profile_summary = _format_profile_for_prompt(user_profile)
     error_count = state.get("error_count", 0)
+    rag_context = state.get("rag_context", "")
     trace = get_trace_from_config(config)
 
     acwr_result = await calculate_acwr(
@@ -666,7 +762,8 @@ async def evaluator_node(state: AgentState, config: RunnableConfig) -> Dict[str,
                 f"ACWR: {acwr_result['acwr']}, 风险等级: {acwr_result['risk']}, "
                 f"历史天数: {acwr_result.get('history_days', 0)}, "
                 f"近28天训练次数: {acwr_result.get('training_sessions_28d', 0)}\n"
-                f"当前重试次数: {error_count}"
+                f"当前重试次数: {error_count}\n"
+                f"{rag_context}"
             ),
             temperature=0.2, max_tokens=1536,
             fallback={"score": 85, "feedback": "自动审查通过", "risk": "low"},
@@ -767,13 +864,17 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     exercises = execution_results.get("exercises", [])
     if exercises is None:
         exercises = []
-    print(f"[DEBUG response_builder] execution_results keys={list(execution_results.keys())}, exercises count={len(exercises)}, exercises={exercises[:2] if exercises else 'EMPTY'}")
+    _log_workflow(
+        f"response_builder_start intent={intent} rag_hit_count={state.get('rag_hit_count', 0)} "
+        f"execution_keys={list(execution_results.keys())} exercises_count={len(exercises)}"
+    )
 
     user_profile = state.get("user_profile", {})
     user_input = state.get("user_input", "")
     mem0_context = state.get("mem0_context", "")
     feedback = reflection.get("feedback", "")
     score = reflection.get("score", 85)
+    rag_context = state.get("rag_context", "")
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
     recent_events = state.get("recent_events", [])
@@ -789,6 +890,7 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
             history_text=history_text,
             current_plan_text=json.dumps([{'name': e['name'], 'sets': e.get('sets'), 'reps': e.get('reps'), 'weight': e.get('weight')} for e in exercises], ensure_ascii=False) if exercises else '暂无训练动作',
             user_input=user_input,
+            rag_context=rag_context,
         )
     elif intent == "diet_log":
         sys_prompt = RESPONSE_DIET_SYSTEM
@@ -799,6 +901,7 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
             recent_events=recent_events,
             history_text=history_text,
             user_input=user_input,
+            rag_context=rag_context,
         )
     elif intent == "profile_update":
         sys_prompt = RESPONSE_PROFILE_SYSTEM
@@ -809,16 +912,25 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
             recent_events=recent_events,
             history_text=history_text,
             user_input=user_input,
+            rag_context=rag_context,
         )
     else:
         sys_prompt = RESPONSE_CHAT_SYSTEM
+        chat_agent_instruction = "请优先根据近期训练事实回答用户问题，特别注意今天/昨天这类相对日期要映射到真实日期后再作答。"
+        if _is_expert_mode(state.get("mode")) and rag_context.strip():
+            chat_agent_instruction = (
+                "你当前处于专家模式。请优先依据上方提供的知识库证据块回答，"
+                "先给结论，再解释机制和恢复建议；自然提及 1-2 个来源标题或章节。"
+                "若知识库没有覆盖，再用通用知识补充，但不要假装引用了知识库。"
+            )
         ctx = _build_prompt_context(
-            agent_instruction="请优先根据近期训练事实回答用户问题，特别注意今天/昨天这类相对日期要映射到真实日期后再作答。",
+            agent_instruction=chat_agent_instruction,
             user_profile=user_profile,
             mem0_context=mem0_context,
             recent_events=recent_events,
             history_text=history_text,
             user_input=user_input,
+            rag_context=rag_context,
         )
 
     with NodeSpan(
@@ -872,6 +984,7 @@ workflow = StateGraph(AgentState)
 
 workflow.add_node("intent_classifier", intent_classifier_node)
 workflow.add_node("profile_retrieval", profile_retrieval_node)
+workflow.add_node("knowledge_retrieval", knowledge_retrieval_node)
 workflow.add_node("planner", planner_node)
 workflow.add_node("quick_combined", quick_combined_node)
 workflow.add_node("executor", executor_node)
@@ -897,11 +1010,32 @@ def route_after_profile(state: AgentState) -> str:
     - training_plan -> planner??????????
     - ?????chat/diet_log/profile_update?-> response_builder????????
     """
+    if _should_use_rag(state):
+        return "knowledge_retrieval"
+    mode = state.get("mode", "quick")
+    intent = state.get("intent", "chat")
+    reason = "mode_not_expert" if not _is_expert_mode(mode) else f"unsupported_intent:{intent}"
+    next_node = "planner" if intent == "training_plan" else "response_builder"
+    _log_workflow(
+        f"rag_skipped mode={mode} intent={intent} reason={reason} "
+        f"next_node={next_node} user_input=\"{_preview_text(state.get('user_input', ''))}\""
+    )
+    return next_node
+
+workflow.add_conditional_edges("profile_retrieval", route_after_profile, {
+    "knowledge_retrieval": "knowledge_retrieval",
+    "planner": "planner",
+    "response_builder": "response_builder",
+})
+
+
+def route_after_knowledge(state: AgentState) -> str:
     if state.get("intent") == "training_plan":
         return "planner"
     return "response_builder"
 
-workflow.add_conditional_edges("profile_retrieval", route_after_profile, {
+
+workflow.add_conditional_edges("knowledge_retrieval", route_after_knowledge, {
     "planner": "planner",
     "response_builder": "response_builder",
 })

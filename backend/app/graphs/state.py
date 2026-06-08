@@ -6,7 +6,7 @@ class AgentState(TypedDict):
     user_input: str
     user_id: str
     session_id: str
-    mode: str  # "quick" or "detailed"
+    mode: str  # "quick" or "detailed" ("detailed" acts as expert mode)
     use_training_sheet: Optional[bool]
 
     # Intent routing
@@ -24,6 +24,8 @@ class AgentState(TypedDict):
 
     # Tavily search results
     tavily_results: List[Dict[str, Any]]
+    rag_context: str
+    rag_hit_count: int
 
     # Evaluation / self-reflection
     reflection_result: Dict[str, Any]  # {"score": int, "feedback": str, "risk": str}

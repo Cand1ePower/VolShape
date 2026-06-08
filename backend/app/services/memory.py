@@ -130,6 +130,46 @@ def should_capture_long_term_memory(text: str) -> bool:
     return True
 
 
+def should_persist_to_mem0(item: Dict[str, Any]) -> bool:
+    item_type = str(item.get("type") or "").strip().lower()
+    key = str(item.get("key") or "").strip().lower()
+    value = item.get("value")
+
+    if item_type == "profile_core":
+        return True
+
+    if item_type == "injury":
+        return True
+
+    if item_type == "state":
+        return key in {
+            "current_illness",
+            "recovery_status",
+            "fatigue_status",
+            "tfcc_status",
+            "sleep_quality",
+            "stress_level",
+            "injury_status",
+            "pain_status",
+            "training_preference",
+            "schedule_constraint",
+        }
+
+    if item_type == "event":
+        if isinstance(value, str):
+            lowered = value.lower()
+            if any(token in lowered for token in ("doms", "酸痛", "疼", "生病", "发烧", "受伤", "出差", "停训")):
+                return True
+        return key in {
+            "injury_event",
+            "illness_event",
+            "schedule_change",
+            "recovery_issue",
+        }
+
+    return False
+
+
 def _to_snake_case(value: str) -> str:
     text = re.sub(r"[^0-9a-zA-Z\u4e00-\u9fff]+", "_", str(value).strip())
     text = re.sub(r"_+", "_", text).strip("_").lower()
@@ -251,14 +291,20 @@ def _build_event_payload(item: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _changes_to_mem0_summary(changes: List[Dict[str, Any]]) -> str:
-    if not changes:
+    persistable_changes = [change for change in changes if should_persist_to_mem0(change)]
+    if not persistable_changes:
         return ""
     lines = ["User memory updates:"]
-    for change in changes:
+    for change in persistable_changes:
         key = change.get("key")
         value = change.get("new", change.get("value"))
         layer = change.get("layer")
-        lines.append(f"- layer{layer}: {key} = {value}")
+        change_type = change.get("type")
+        if change_type == "injury":
+            action = change.get("action", "add")
+            lines.append(f"- layer{layer}: injury {action} = {change.get('value')}")
+        else:
+            lines.append(f"- layer{layer}: {key} = {value}")
     return "\n".join(lines)
 
 
@@ -296,7 +342,16 @@ class MemoryService:
                 old_value = getattr(profile, key, None)
                 if old_value != coerced_value:
                     setattr(profile, key, coerced_value)
-                    changes.append({"key": key, "old": old_value, "new": coerced_value, "layer": 1})
+                    changes.append(
+                        {
+                            "type": item_type,
+                            "key": key,
+                            "value": value,
+                            "old": old_value,
+                            "new": coerced_value,
+                            "layer": 1,
+                        }
+                    )
                 continue
 
             if item_type == "injury":
@@ -306,10 +361,30 @@ class MemoryService:
 
                 if action == "remove" and injury_name in current_injuries:
                     profile.injuries = [inj for inj in current_injuries if inj != injury_name]
-                    changes.append({"key": "injuries", "old": current_injuries, "new": profile.injuries, "layer": 1})
+                    changes.append(
+                        {
+                            "type": item_type,
+                            "key": "injuries",
+                            "value": injury_name,
+                            "action": action,
+                            "old": current_injuries,
+                            "new": profile.injuries,
+                            "layer": 1,
+                        }
+                    )
                 elif action != "remove" and injury_name not in current_injuries:
                     profile.injuries = current_injuries + [injury_name]
-                    changes.append({"key": "injuries", "old": current_injuries, "new": profile.injuries, "layer": 1})
+                    changes.append(
+                        {
+                            "type": item_type,
+                            "key": "injuries",
+                            "value": injury_name,
+                            "action": action,
+                            "old": current_injuries,
+                            "new": profile.injuries,
+                            "layer": 1,
+                        }
+                    )
 
                 db.add(
                     Events(
@@ -351,7 +426,16 @@ class MemoryService:
                                 source="agent_extracted",
                             )
                         )
-                        changes.append({"key": key, "old": latest_value, "new": numeric_value, "layer": 2})
+                        changes.append(
+                            {
+                                "type": item_type,
+                                "key": key,
+                                "value": numeric_value,
+                                "old": latest_value,
+                                "new": numeric_value,
+                                "layer": 2,
+                            }
+                        )
                     continue
 
             if item_type in _STATE_EVENT_TYPES or key not in CORE_PROFILE_KEYS:
@@ -365,7 +449,15 @@ class MemoryService:
                     )
                 )
                 if updated:
-                    changes.append({"key": key, "value": value, "new": value, "layer": 2})
+                    changes.append(
+                        {
+                            "type": item_type,
+                            "key": key,
+                            "value": value,
+                            "new": value,
+                            "layer": 2,
+                        }
+                    )
 
         if changes:
             await db.commit()

@@ -14,7 +14,7 @@ if os.getenv("TESTING") == "1":
 
 def _build_engine(url: str):
     kwargs = {
-        "echo": True if settings.ENV == "development" else False,
+        "echo": settings.SQL_ECHO,
         "future": True,
     }
     if "postgresql" in url:

@@ -257,6 +257,7 @@ export default function ChatScreen() {
     const text = `${state?.node || ''} ${state?.message || ''}`.toLowerCase();
     if (text.includes('intent')) return '正在分析用户意图...';
     if (text.includes('memory') || text.includes('profile')) return '正在同步用户记忆...';
+    if (text.includes('knowledge') || text.includes('retrieval')) return '正在检索知识库...';
     if (text.includes('plan') || text.includes('workout')) return '正在制作计划...';
     if (text.includes('diet') || text.includes('nutrition')) return '正在整理饮食建议...';
     if (text.includes('response') || text.includes('final')) return '正在生成回复...';

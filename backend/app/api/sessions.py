@@ -250,12 +250,13 @@ async def load_history(
     for row in rows:
         try:
             data = json.loads(row.content)
-            if isinstance(data, dict) and ("text" in data or "customCard" in data):
+            if isinstance(data, dict) and ("text" in data or "customCard" in data or "sources" in data):
                 messages.append(
                     {
                         "role": row.role,
                         "content": data.get("text", ""),
                         "customCard": data.get("customCard"),
+                        "sources": data.get("sources") or [],
                         "created_at": row.created_at.isoformat() if row.created_at else None,
                     }
                 )
@@ -280,11 +281,15 @@ async def save_message(
     db: AsyncSession,
     *,
     custom_card: Optional[dict] = None,
+    sources: Optional[list[str]] = None,
     title_hint: Optional[str] = None,
 ) -> None:
     """Public alias used by chat.py and media.py."""
-    if custom_card:
-        stored_content = json.dumps({"text": content, "customCard": custom_card}, ensure_ascii=False)
+    if custom_card or sources:
+        stored_content = json.dumps(
+            {"text": content, "customCard": custom_card, "sources": sources or []},
+            ensure_ascii=False,
+        )
     else:
         stored_content = content
 

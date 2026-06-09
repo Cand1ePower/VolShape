@@ -33,6 +33,7 @@ class RagSettings:
     context_top_k: int = 5
     bm25_top_k: int = 20
     rerank_top_k: int = 5
+    query_embedding_timeout_seconds: float = 12.0
     embedding_batch_size: int = 32
     qdrant_upsert_batch_size: int = 64
     embedding_provider: str = "jina"
@@ -58,6 +59,7 @@ def get_rag_settings() -> RagSettings:
         context_top_k=int(os.getenv("RAG_CONTEXT_TOP_K", "5")),
         bm25_top_k=int(os.getenv("RAG_BM25_TOP_K", "20")),
         rerank_top_k=int(os.getenv("RAG_RERANK_TOP_K", "5")),
+        query_embedding_timeout_seconds=float(os.getenv("RAG_QUERY_EMBEDDING_TIMEOUT_SECONDS", "12")),
         embedding_batch_size=int(os.getenv("RAG_EMBEDDING_BATCH_SIZE", "32")),
         qdrant_upsert_batch_size=int(os.getenv("RAG_QDRANT_UPSERT_BATCH_SIZE", "64")),
         embedding_provider=os.getenv("RAG_EMBEDDING_PROVIDER", "jina"),

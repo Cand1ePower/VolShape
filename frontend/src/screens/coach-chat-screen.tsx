@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -24,6 +24,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from 'expo-router';
 
+import { useThemeController } from '@/contexts/ThemeContext';
 import { WorkoutCard } from '../components/ui/WorkoutCard';
 import { DietCard } from '../components/ui/DietCard';
 import { PortionConfirmCard } from '../components/ui/PortionConfirmCard';
@@ -40,7 +41,6 @@ interface Message {
   createdAt: Date;
   customCard?: any;
   attachment?: MessageAttachment;
-  sources?: string[];
 }
 
 interface MessageAttachment {
@@ -88,7 +88,7 @@ const WELCOME_TEXT = '你好，我是 VolShape AI 教练。告诉我你的训练
 const LOGIN_WELCOME_TEXT = '你好，我是 VolShape AI 教练。请先登录后再继续使用。';
 const HISTORY_ERROR_TEXT = '你好，我是 VolShape AI 教练。当前聊天记录加载失败，请稍后重试。';
 
-const CHAT_PROMPT_SUGGESTIONS = [
+const WEB_PROMPT_SUGGESTIONS = [
   '根据我的目标生成今天的训练计划',
   '这是我今天的晚饭，帮我估算热量和三大营养',
   '我昨天做了哪些训练，实际完成了多少组？',
@@ -155,13 +155,18 @@ function renderFormattedMessage(
 }
 
 export default function ChatScreen() {
-  const scheme = useColorScheme();
-  const isDark = scheme === 'dark';
+  useColorScheme();
+  const { isDark } = useThemeController();
   const { width } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const navigation = useNavigation();
 
   const dynamicFontSize = width < 375 ? 14 : 15;
+  const [isWebMounted, setIsWebMounted] = useState(Platform.OS !== 'web');
+  const isWeb = Platform.OS === 'web';
+  const isMobileWeb = isWebMounted && isWeb && width < 768;
+  const isTabletWeb = isWebMounted && isWeb && width >= 768;
+  const isDesktopWeb = isWebMounted && isWeb && width >= 1024;
 
   const { sessionId, isLoggedIn, isLoading, getValidToken, setSessionId } = useAuth();
   const { resetPlan, syncWorkoutOnLogin } = usePlan();
@@ -197,14 +202,14 @@ export default function ChatScreen() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(sessionId);
   const historyRequestRef = useRef(0);
-  const activeBotMessageIdRef = useRef<string | null>(null);
-  const pendingTokenBufferRef = useRef('');
-  const pendingStreamDoneRef = useRef(false);
-  const pendingStreamSourcesRef = useRef<string[]>([]);
-  const tokenFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const floatingBaseBottom = Platform.OS === 'ios' ? 80 : 62;
   const keyboardGap = Platform.OS === 'ios' ? 8 : 42;
+  const headerMaxWidth = isDesktopWeb ? 1280 : isTabletWeb ? 920 : isMobileWeb ? 420 : 780;
+  const contentMaxWidth = isDesktopWeb ? 1280 : isTabletWeb ? 920 : isMobileWeb ? 420 : 760;
+  const composerMaxWidth = isDesktopWeb ? 960 : isTabletWeb ? 860 : isMobileWeb ? 420 : 780;
+  const floatingBottom = isDesktopWeb ? 24 : isMobileWeb ? 86 : floatingBaseBottom;
+  const chatBottomInset = isDesktopWeb ? 250 : isTabletWeb ? 228 : isMobileWeb ? 180 : 215;
 
   const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
   const borderCol = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
@@ -225,6 +230,11 @@ export default function ChatScreen() {
     }
     return [{ id: sessionId, title: currentSessionTitle }, ...sessionList];
   }, [currentSessionTitle, sessionId, sessionList]);
+  const isWelcomeOnly =
+    messages.length === 1 &&
+    messages[0]?.id === 'welcome' &&
+    [WELCOME_TEXT, LOGIN_WELCOME_TEXT, HISTORY_ERROR_TEXT].includes(messages[0]?.text || '');
+  const showIntroHero = messages.length === 0 || isWelcomeOnly;
   useEffect(() => {
     sessionIdRef.current = sessionId;
   }, [sessionId]);
@@ -233,13 +243,6 @@ export default function ChatScreen() {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated });
     }, 80);
-  }, []);
-
-  const stopTokenFlush = useCallback(() => {
-    if (tokenFlushTimerRef.current) {
-      clearInterval(tokenFlushTimerRef.current);
-      tokenFlushTimerRef.current = null;
-    }
   }, []);
 
   const showWelcomeMessage = useCallback((text: string) => {
@@ -270,7 +273,6 @@ export default function ChatScreen() {
     const text = `${state?.node || ''} ${state?.message || ''}`.toLowerCase();
     if (text.includes('intent')) return '正在分析用户意图...';
     if (text.includes('memory') || text.includes('profile')) return '正在同步用户记忆...';
-    if (text.includes('knowledge') || text.includes('retrieval')) return '正在检索知识库...';
     if (text.includes('plan') || text.includes('workout')) return '正在制作计划...';
     if (text.includes('diet') || text.includes('nutrition')) return '正在整理饮食建议...';
     if (text.includes('response') || text.includes('final')) return '正在生成回复...';
@@ -310,77 +312,6 @@ export default function ChatScreen() {
       setIsSessionLoading(false);
     }
   }, [getValidToken, isLoggedIn, setSessionId]);
-
-  const finalizeVisibleStream = useCallback(() => {
-    const activeMessageId = activeBotMessageIdRef.current;
-    const pendingSources = pendingStreamSourcesRef.current;
-    if (activeMessageId && pendingSources.length > 0) {
-      setMessages((prev) =>
-        prev.map((msg) => (msg.id === activeMessageId ? { ...msg, sources: pendingSources } : msg))
-      );
-    }
-    pendingStreamSourcesRef.current = [];
-    pendingStreamDoneRef.current = false;
-    setIsGenerating(false);
-    setAgentStatus(null);
-    refreshSessions();
-    scrollToBottom(true);
-  }, [refreshSessions, scrollToBottom]);
-
-  const resetTokenStreamingState = useCallback(() => {
-    stopTokenFlush();
-    activeBotMessageIdRef.current = null;
-    pendingTokenBufferRef.current = '';
-    pendingStreamDoneRef.current = false;
-    pendingStreamSourcesRef.current = [];
-    currentBotTextRef.current = '';
-  }, [stopTokenFlush]);
-
-  const ensureTokenFlush = useCallback(
-    (botMessageId: string) => {
-      activeBotMessageIdRef.current = botMessageId;
-      if (tokenFlushTimerRef.current) {
-        return;
-      }
-
-      tokenFlushTimerRef.current = setInterval(() => {
-        const activeMessageId = activeBotMessageIdRef.current;
-        if (!activeMessageId) {
-          stopTokenFlush();
-          return;
-        }
-
-        if (!pendingTokenBufferRef.current) {
-          if (pendingStreamDoneRef.current) {
-            stopTokenFlush();
-            finalizeVisibleStream();
-          }
-          return;
-        }
-
-        const nextSlice = pendingTokenBufferRef.current.slice(0, 4);
-        pendingTokenBufferRef.current = pendingTokenBufferRef.current.slice(4);
-        currentBotTextRef.current += nextSlice;
-
-        setMessages((prev) =>
-          prev.map((msg) => (msg.id === activeMessageId ? { ...msg, text: currentBotTextRef.current } : msg))
-        );
-        scrollToBottom(false);
-
-        if (!pendingTokenBufferRef.current && pendingStreamDoneRef.current) {
-          stopTokenFlush();
-          finalizeVisibleStream();
-        }
-      }, 28);
-    },
-    [finalizeVisibleStream, scrollToBottom, stopTokenFlush]
-  );
-
-  useEffect(() => {
-    return () => {
-      stopTokenFlush();
-    };
-  }, [stopTokenFlush]);
 
   const handleOpenSessionModal = useCallback(() => {
     setIsSessionModalVisible(true);
@@ -789,8 +720,7 @@ export default function ChatScreen() {
 
     const botMessageId = Math.random().toString(36).slice(2);
     setMessages((prev) => [...prev, { id: botMessageId, text: '', isBot: true, createdAt: new Date() }]);
-    resetTokenStreamingState();
-    activeBotMessageIdRef.current = botMessageId;
+    currentBotTextRef.current = '';
 
     try {
       esRef.current?.close?.();
@@ -810,8 +740,11 @@ export default function ChatScreen() {
             scrollToBottom(true);
           },
           onToken: (tokenText) => {
-            pendingTokenBufferRef.current += tokenText;
-            ensureTokenFlush(botMessageId);
+            currentBotTextRef.current += tokenText;
+            setMessages((prev) =>
+              prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: currentBotTextRef.current } : msg))
+            );
+            scrollToBottom(false);
           },
           onUI: (cardData) => {
             setMessages((prev) =>
@@ -819,15 +752,13 @@ export default function ChatScreen() {
             );
             scrollToBottom(true);
           },
-          onDone: (payload) => {
-            pendingStreamSourcesRef.current = Array.isArray(payload?.sources) ? payload.sources : [];
-            pendingStreamDoneRef.current = true;
-            if (!pendingTokenBufferRef.current) {
-              finalizeVisibleStream();
-            }
+          onDone: () => {
+            setIsGenerating(false);
+            setAgentStatus(null);
+            refreshSessions();
+            scrollToBottom(true);
           },
           onError: (err) => {
-            resetTokenStreamingState();
             setIsGenerating(false);
             setAgentStatus(null);
             esRef.current?.close?.();
@@ -841,7 +772,6 @@ export default function ChatScreen() {
         }
       );
     } catch (error: any) {
-      resetTokenStreamingState();
       setIsGenerating(false);
       setAgentStatus(null);
       const message = error?.message || '???????????';
@@ -849,7 +779,20 @@ export default function ChatScreen() {
         prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `?? ${message}` } : msg))
       );
     }
-  }, [ensureTokenFlush, finalizeVisibleStream, formatProcessingMessage, getValidToken, inputMinHeight, inputText, isGenerating, mode, pendingAttachment, refreshSessions, resetTokenStreamingState, scrollToBottom, sessionId, useTrainingSheet]);
+  }, [formatProcessingMessage, getValidToken, inputMinHeight, inputText, isGenerating, mode, pendingAttachment, refreshSessions, scrollToBottom, sessionId, useTrainingSheet]);
+
+  const handleWebInputKeyPress = useCallback(
+    (event: any) => {
+      if (Platform.OS !== 'web') {
+        return;
+      }
+      if (event?.nativeEvent?.key === 'Enter' && !event?.nativeEvent?.shiftKey) {
+        event.preventDefault?.();
+        handleSend();
+      }
+    },
+    [handleSend]
+  );
   useEffect(() => {
     if (!isLoggedIn) {
       resetPlan();
@@ -863,27 +806,14 @@ export default function ChatScreen() {
   }, [isLoggedIn, resetPlan, syncWorkoutOnLogin]);
 
   useEffect(() => {
-    navigation.setOptions({
-      tabBarStyle: {
-        backgroundColor: isDark ? 'rgba(20, 20, 26, 0.85)' : 'rgba(255, 255, 255, 0.88)',
-        borderTopWidth: 0.5,
-        borderTopColor: isDark ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.03)',
-        shadowColor: 'transparent',
-        elevation: 0,
-        paddingBottom: Platform.OS === 'ios' ? 22 : 8,
-        paddingTop: 8,
-        height: Platform.OS === 'ios' ? 76 : 58,
-        position: 'absolute',
-        bottom: 0,
-        left: 0,
-        right: 0,
-        transform: [{ translateY: tabBarTranslateAnim }],
-        ...(Platform.OS === 'web'
-          ? ({ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any)
-          : {}),
-      },
-    });
-  }, [isDark, navigation, tabBarTranslateAnim]);
+    // Web 端的 Tab 栏由 _layout.web.tsx 统一管理，这里不再覆盖 tabBarStyle
+    // 仅保留桌面端侧边栏的特殊处理
+    if (isDesktopWeb) {
+      navigation.setOptions({
+        tabBarStyle: { display: 'none' },
+      });
+    }
+  }, [isDark, isDesktopWeb, navigation]);
 
   useEffect(() => {
     Animated.timing(tabBarTranslateAnim, {
@@ -971,7 +901,6 @@ export default function ChatScreen() {
               createdAt: message.created_at ? new Date(message.created_at) : new Date(),
               customCard: attachment ? undefined : message.customCard || undefined,
               attachment,
-              sources: Array.isArray(message.sources) ? message.sources : [],
             };
           })
         );
@@ -986,6 +915,12 @@ export default function ChatScreen() {
   }, [getValidToken, isLoading, isLoggedIn, sessionId, showWelcomeMessage]);
 
   useEffect(() => {
+    if (Platform.OS === 'web') {
+      setIsWebMounted(true);
+    }
+  }, []);
+
+  useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (esRef.current) esRef.current.close();
@@ -993,16 +928,24 @@ export default function ChatScreen() {
   }, []);
 
   return (
-    <View style={[styles.container, { backgroundColor: bgCol }]}>
+    <View style={[styles.container, { backgroundColor: bgCol }, isWeb ? styles.webPage : null]}>
       <LinearGradient
         colors={[
           isDark ? 'rgba(10,10,12,0.96)' : 'rgba(245,245,247,0.96)',
           isDark ? 'rgba(10,10,12,0)' : 'rgba(245,245,247,0)',
         ]}
-        style={[styles.header, { paddingTop: Math.max(insets.top, 12), paddingBottom: 24 }]}
+        style={[
+          styles.header,
+          {
+            paddingTop: isMobileWeb ? 18 : 20,
+            paddingBottom: isMobileWeb ? 18 : 24,
+            paddingHorizontal: isDesktopWeb ? 32 : isMobileWeb ? 12 : 16,
+          },
+        ]}
       >
+        <View style={[styles.headerFrame, { maxWidth: headerMaxWidth }]}>
         <View style={styles.headerRow}>
-          <View style={styles.headerLeft}>
+          <View style={[styles.headerLeft, isMobileWeb && { paddingLeft: 140 }]}>
             <Text style={[styles.headerTitle, { color: textCol }]}>VolShape</Text>
             <View style={styles.headerSubtitleRow}>
               <View style={[styles.statusDot, { backgroundColor: isGenerating ? '#34C759' : isLoggedIn ? '#007AFF' : '#AEAEB2' }]} />
@@ -1011,22 +954,23 @@ export default function ChatScreen() {
               </Text>
             </View>
           </View>
-          <View style={styles.headerRight}>
+          <View style={[styles.headerRight, isMobileWeb ? { gap: 6 } : null]}>
             <TouchableOpacity
-              style={[styles.headerIconButton, { backgroundColor: frostedBg, borderColor: borderCol }]}
+              style={[styles.headerIconButton, isMobileWeb ? styles.headerIconButtonMobile : null, { backgroundColor: frostedBg, borderColor: borderCol }]}
               onPress={handleCreateSession}
               disabled={!isLoggedIn}
             >
-              <Ionicons name="add" size={18} color={isLoggedIn ? textCol : subTextCol} />
+              <Ionicons name="add" size={isMobileWeb ? 16 : 18} color={isLoggedIn ? textCol : subTextCol} />
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.headerIconButton, { backgroundColor: frostedBg, borderColor: borderCol }]}
+              style={[styles.headerIconButton, isMobileWeb ? styles.headerIconButtonMobile : null, { backgroundColor: frostedBg, borderColor: borderCol }]}
               onPress={handleOpenSessionModal}
               disabled={!isLoggedIn}
             >
-              <Ionicons name="layers-outline" size={17} color={isLoggedIn ? textCol : subTextCol} />
+              <Ionicons name="layers-outline" size={isMobileWeb ? 15 : 17} color={isLoggedIn ? textCol : subTextCol} />
             </TouchableOpacity>
           </View>
+        </View>
         </View>
       </LinearGradient>
 
@@ -1035,12 +979,13 @@ export default function ChatScreen() {
           style={[
             styles.statusBanner,
             {
-              backgroundColor: isDark ? 'rgba(0,122,255,0.08)' : 'rgba(0,122,255,0.04)',
+              backgroundColor: 'rgba(0,122,255,0.08)',
               borderBottomColor: borderCol,
+              paddingHorizontal: isDesktopWeb ? 32 : isMobileWeb ? 12 : 20,
             },
           ]}
         >
-          <View style={styles.statusInner}>
+          <View style={[styles.statusInner, { maxWidth: headerMaxWidth }]}>
             <ActivityIndicator size="small" color="#007AFF" style={styles.spinner} />
             <Text style={[styles.statusMessage, { color: subTextCol }]} numberOfLines={1}>
               {processingMessage}
@@ -1052,36 +997,69 @@ export default function ChatScreen() {
       <ScrollView
         ref={scrollViewRef}
         style={styles.chatScroll}
-        contentContainerStyle={styles.chatContent}
+        contentContainerStyle={[
+          styles.chatContent,
+          {
+            paddingTop: isDesktopWeb ? 152 : isTabletWeb ? 140 : isMobileWeb ? 88 : 100,
+            paddingBottom: chatBottomInset,
+            paddingHorizontal: isDesktopWeb ? 32 : 16,
+          },
+        ]}
         scrollEventThrottle={16}
         onScroll={handleScroll}
         onContentSizeChange={() => scrollToBottom(true)}
+        contentInsetAdjustmentBehavior="automatic"
       >
-        <View style={styles.chatMaxWidth}>
-          {(messages.length === 0 || (messages.length === 1 && messages[0]?.id === 'welcome')) && (
+        <View style={[styles.chatBody, isDesktopWeb ? styles.chatBodyDesktop : null, { maxWidth: contentMaxWidth }]}>
+          {isDesktopWeb && (
+            <View style={[styles.desktopRail, { backgroundColor: frostedBg, borderColor: borderCol }]}>
+              <Text style={[styles.desktopRailEyebrow, { color: subTextCol }]}>WEB 演示</Text>
+              <Text style={[styles.desktopRailTitle, { color: textCol }]}>VolShape AI 健身教练</Text>
+              <Text style={[styles.desktopRailText, { color: subTextCol }]}>
+                在电脑端会保持更宽的消息区、固定操作区和更清晰的对话结构，方便演示多轮对话、训练计划和饮食识别。
+              </Text>
+              <View style={[styles.desktopRailCard, { backgroundColor: 'rgba(255,255,255,0.03)' }]}>
+                <Text style={[styles.desktopRailCardLabel, { color: subTextCol }]}>当前模式</Text>
+                <Text style={[styles.desktopRailCardValue, { color: textCol }]}>{mode === 'quick' ? '快速模式' : '专家模式'}</Text>
+              </View>
+              <View style={[styles.desktopRailCard, { backgroundColor: 'rgba(255,255,255,0.03)' }]}>
+                <Text style={[styles.desktopRailCardLabel, { color: subTextCol }]}>上传能力</Text>
+                <Text style={[styles.desktopRailCardValue, { color: textCol }]}>图片热量分析 / 视频姿态分析</Text>
+              </View>
+              <View style={[styles.desktopRailCard, { backgroundColor: 'rgba(255,255,255,0.03)' }]}>
+                <Text style={[styles.desktopRailCardLabel, { color: subTextCol }]}>当前对话</Text>
+                <Text style={[styles.desktopRailCardValue, { color: textCol }]} numberOfLines={2}>
+                  {isLoggedIn ? currentSessionTitle : '未登录访客会话'}
+                </Text>
+              </View>
+            </View>
+          )}
+        <View style={[styles.chatMaxWidth, { maxWidth: isDesktopWeb ? 960 : '100%' }]}>
+          {showIntroHero && (
             <View
               style={[
                 styles.emptyChatHero,
+                isMobileWeb ? styles.emptyChatHeroMobile : null,
                 {
-                  backgroundColor: botBubbleBg,
+                  backgroundColor: 'rgba(24,24,28,0.9)',
                   borderColor: borderCol,
                 },
               ]}
             >
               <Text style={[styles.emptyChatEyebrow, { color: subTextCol }]}>VOLSHAPE COACH</Text>
-              <Text style={[styles.emptyChatTitle, { color: textCol }]}>从一句话开始今天的训练或饮食记录</Text>
-              <Text style={[styles.emptyChatDescription, { color: subTextCol }]}>
+              <Text style={[styles.emptyChatTitle, isMobileWeb ? styles.emptyChatTitleMobile : null, { color: textCol }]}>从一句话开始今天的训练或饮食记录</Text>
+              <Text style={[styles.emptyChatDescription, isMobileWeb ? styles.emptyChatDescriptionMobile : null, { color: subTextCol }]}>
                 你可以直接提训练目标、恢复状态、饮食照片，或者追问昨天的训练完成情况。专家模式下也支持图片与视频分析。
               </Text>
               <View style={styles.emptyChatSuggestionList}>
-                {CHAT_PROMPT_SUGGESTIONS.map((suggestion) => (
+                {WEB_PROMPT_SUGGESTIONS.map((suggestion) => (
                   <TouchableOpacity
                     key={suggestion}
                     activeOpacity={0.82}
                     style={[
                       styles.emptyChatSuggestion,
                       {
-                        backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                        backgroundColor: 'rgba(255,255,255,0.04)',
                         borderColor: borderCol,
                       },
                     ]}
@@ -1094,7 +1072,7 @@ export default function ChatScreen() {
               </View>
             </View>
           )}
-          {messages.map((msg, index) => {
+          {!showIntroHero && messages.map((msg, index) => {
             const isStreamingPlaceholder = isGenerating && msg.isBot && messages[messages.length - 1]?.id === msg.id && !msg.text;
             return (
               <View
@@ -1176,28 +1154,11 @@ export default function ChatScreen() {
                       ) : null}
                     </View>
                   )}
-
-                  {msg.isBot && msg.sources && msg.sources.length > 0 ? (
-                    <View style={styles.messageSourcesBlock}>
-                      <Text style={[styles.messageSourcesLabel, { color: subTextCol }]}>参考来源</Text>
-                      <Text
-                        style={[
-                          styles.messageSourcesText,
-                          {
-                            color: subTextCol,
-                            fontSize: Math.max(dynamicFontSize - 3, 11),
-                            lineHeight: Math.max(dynamicFontSize - 1, 14),
-                          },
-                        ]}
-                      >
-                        {msg.sources.map((source, sourceIndex) => `${sourceIndex + 1}. ${source}`).join('\n')}
-                      </Text>
-                    </View>
-                  ) : null}
                 </View>
               </View>
             );
           })}
+        </View>
         </View>
       </ScrollView>
 
@@ -1205,7 +1166,13 @@ export default function ChatScreen() {
         style={[
           styles.floatingControls,
           {
-            bottom: floatingBaseBottom,
+            bottom: floatingBottom,
+            width: isDesktopWeb ? 960 : undefined,
+            maxWidth: isDesktopWeb ? 960 : undefined,
+            left: isDesktopWeb ? '50%' : 0,
+            right: isDesktopWeb ? 'auto' : 0,
+            marginLeft: isDesktopWeb ? -480 : 0,
+            paddingHorizontal: isDesktopWeb ? 0 : 16,
             transform: [
               {
                 translateY: tabBarTranslateAnim.interpolate({
@@ -1409,6 +1376,7 @@ export default function ChatScreen() {
             scrollEnabled={inputHeight >= inputMaxHeight}
             onSubmitEditing={handleSend}
             onContentSizeChange={handleInputContentSizeChange}
+            onKeyPress={handleWebInputKeyPress}
           />
           <TouchableOpacity
             activeOpacity={0.85}
@@ -1573,18 +1541,23 @@ export default function ChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
+  webPage: { width: '100%' },
   header: {
-    position: 'absolute',
+    position: 'fixed',
     top: 0,
     left: 0,
     right: 0,
     zIndex: 10,
     paddingHorizontal: 16,
+    backdropFilter: 'blur(20px)',
+    WebkitBackdropFilter: 'blur(20px)',
+  } as any,
+  headerFrame: {
+    width: '100%',
+    alignSelf: 'center',
   },
   headerRow: {
     width: '100%',
-    maxWidth: 800,
-    alignSelf: 'center',
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -1602,6 +1575,11 @@ const styles = StyleSheet.create({
     borderWidth: 0.5,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  headerIconButtonMobile: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
   },
   statusBanner: {
     width: '100%',
@@ -1625,14 +1603,65 @@ const styles = StyleSheet.create({
     paddingBottom: 215,
     paddingHorizontal: 16,
   },
-  chatMaxWidth: { width: '100%', maxWidth: 760, gap: 18 },
+  chatBody: {
+    width: '100%',
+    alignSelf: 'center',
+  },
+  chatBodyDesktop: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  desktopRail: {
+    width: 208,
+    borderWidth: 0.5,
+    borderRadius: 24,
+    padding: 14,
+    gap: 10,
+    position: 'fixed',
+    left: 8,
+    bottom: 32,
+  } as any,
+  desktopRailEyebrow: {
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.4,
+  },
+  desktopRailTitle: {
+    fontSize: 18,
+    fontWeight: '800',
+    lineHeight: 24,
+  },
+  desktopRailText: {
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  desktopRailCard: {
+    borderRadius: 16,
+    padding: 12,
+    gap: 5,
+  },
+  desktopRailCardLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  desktopRailCardValue: {
+    fontSize: 14,
+    fontWeight: '700',
+    lineHeight: 20,
+  },
+  chatMaxWidth: { width: '100%', maxWidth: 760, gap: 18, alignSelf: 'center' },
   emptyChatHero: {
     width: '100%',
     borderWidth: 0.5,
     borderRadius: 28,
-    padding: 22,
+    padding: 24,
     gap: 14,
     marginBottom: 10,
+  },
+  emptyChatHeroMobile: {
+    padding: 20,
+    borderRadius: 24,
   },
   emptyChatEyebrow: {
     fontSize: 11,
@@ -1640,13 +1669,25 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   emptyChatTitle: {
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '800',
-    lineHeight: 34,
+    lineHeight: 36,
+    maxWidth: 520,
+  },
+  emptyChatTitleMobile: {
+    fontSize: 20,
+    lineHeight: 28,
+    maxWidth: '100%',
   },
   emptyChatDescription: {
     fontSize: 14,
     lineHeight: 22,
+    maxWidth: 620,
+  },
+  emptyChatDescriptionMobile: {
+    fontSize: 13,
+    lineHeight: 20,
+    maxWidth: '100%',
   },
   emptyChatSuggestionList: {
     gap: 10,
@@ -1690,22 +1731,6 @@ const styles = StyleSheet.create({
   messageParagraph: { marginTop: 10 },
   messageParagraphText: { marginTop: 10 },
   messageBold: { fontWeight: '800' },
-  messageSourcesBlock: {
-    marginTop: 12,
-    paddingTop: 10,
-    borderTopWidth: 0.5,
-    borderTopColor: 'rgba(127,127,127,0.22)',
-  },
-  messageSourcesLabel: {
-    fontSize: 11,
-    fontWeight: '700',
-    marginBottom: 6,
-    textTransform: 'uppercase',
-  },
-  messageSourcesText: {
-    flexShrink: 1,
-    fontWeight: '500',
-  },
   messageAttachment: {
     width: 52,
     height: 52,
@@ -1728,7 +1753,7 @@ const styles = StyleSheet.create({
   processingLine: { minWidth: 220, flexDirection: 'row', alignItems: 'center' },
   processingText: { flex: 1, fontSize: 13, fontWeight: '600' },
   floatingControls: {
-    position: 'absolute',
+    position: 'fixed',
     left: 0,
     right: 0,
     zIndex: 20,
@@ -1738,7 +1763,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingTop: 6,
     gap: 8,
-  },
+  } as any,
   pendingAttachmentBar: {
     width: '100%',
     borderRadius: 18,

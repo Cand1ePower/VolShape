@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from dataclasses import dataclass
 from functools import lru_cache
 from typing import Any, Dict, Optional, Tuple
 
@@ -34,6 +35,27 @@ def get_langfuse_client():
         return None
 
 
+@dataclass
+class TraceHandle:
+    client: Any
+    root_observation: Any
+    propagation_cm: Any | None = None
+    root_cm: Any | None = None
+
+    @property
+    def trace_id(self) -> Optional[str]:
+        return getattr(self.root_observation, "trace_id", None) or getattr(self.root_observation, "id", None)
+
+    def start_observation(self, **kwargs: Any) -> Any:
+        return self.root_observation.start_observation(**kwargs)
+
+    def update(self, **kwargs: Any) -> Any:
+        return self.root_observation.update(**kwargs)
+
+    def end(self) -> Any:
+        return self.root_observation.end()
+
+
 def create_trace(
     user_id: str,
     session_id: str,
@@ -45,16 +67,42 @@ def create_trace(
     if lf is None:
         return None, None
 
+    propagation_cm = None
     try:
-        trace = lf.trace(
-            name=f"volshape_chat_{mode}",
+        from langfuse import propagate_attributes
+
+        propagation_cm = propagate_attributes(
             user_id=user_id,
             session_id=session_id,
-            input={"user_input": user_input, "mode": mode},
-            metadata={"mode": mode, "session_id": session_id, "user_id": user_id},
+            trace_name=f"volshape_chat_{mode}",
         )
-        return trace, getattr(trace, "trace_id", None) or getattr(trace, "id", None)
+        propagation_cm.__enter__()
+
+        root_cm = None
+        if hasattr(lf, "start_as_current_observation"):
+            root_cm = lf.start_as_current_observation(
+                name="chat_request",
+                as_type="chain",
+                input={"user_input": user_input, "mode": mode},
+                metadata={"mode": mode, "session_id": session_id, "user_id": user_id},
+                end_on_exit=False,
+            )
+            root = root_cm.__enter__()
+        else:
+            root = lf.start_observation(
+                name="chat_request",
+                as_type="chain",
+                input={"user_input": user_input, "mode": mode},
+                metadata={"mode": mode, "session_id": session_id, "user_id": user_id},
+            )
+        handle = TraceHandle(client=lf, root_observation=root, propagation_cm=propagation_cm, root_cm=root_cm)
+        return handle, handle.trace_id
     except Exception as exc:
+        if propagation_cm is not None:
+            try:
+                propagation_cm.__exit__(None, None, None)
+            except Exception:
+                pass
         print(f"[Langfuse] create_trace failed: {exc}")
         return None, None
 
@@ -64,14 +112,30 @@ def finish_trace(trace: Optional[Any], final_response: str, intent: str = "", me
     if trace is None:
         return
     try:
-        trace.update(output={"final_response": final_response[:500], "intent": intent}, metadata=metadata or {})
+        trace.update(
+            output={"final_response": final_response[:500], "intent": intent},
+            metadata=metadata or {},
+        )
+        client = getattr(trace, "client", None) or get_langfuse_client()
         if hasattr(trace, "end"):
             trace.end()
-        lf = get_langfuse_client()
-        if lf:
-            lf.flush()
+        if client:
+            client.flush()
     except Exception as exc:
         print(f"[Langfuse] finish_trace failed: {exc}")
+    finally:
+        root_cm = getattr(trace, "root_cm", None)
+        if root_cm is not None:
+            try:
+                root_cm.__exit__(None, None, None)
+            except Exception as exit_exc:
+                print(f"[Langfuse] root context close failed: {exit_exc}")
+        propagation_cm = getattr(trace, "propagation_cm", None)
+        if propagation_cm is not None:
+            try:
+                propagation_cm.__exit__(None, None, None)
+            except Exception as exit_exc:
+                print(f"[Langfuse] propagation context close failed: {exit_exc}")
 
 
 class NodeSpan:
@@ -99,16 +163,16 @@ class NodeSpan:
     def __enter__(self):
         if self._trace is not None:
             try:
-                if hasattr(self._trace, "span"):
-                    self._span = self._trace.span(
-                        name=self._node_name,
-                        input=self._input_data,
-                        metadata=self._metadata,
-                    )
-                elif hasattr(self._trace, "start_observation"):
+                if hasattr(self._trace, "start_observation"):
                     self._span = self._trace.start_observation(
                         name=self._node_name,
                         as_type="span",
+                        input=self._input_data,
+                        metadata=self._metadata,
+                    )
+                elif hasattr(self._trace, "span"):
+                    self._span = self._trace.span(
+                        name=self._node_name,
                         input=self._input_data,
                         metadata=self._metadata,
                     )

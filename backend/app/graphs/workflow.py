@@ -12,6 +12,7 @@ from app.services.errors import LLMGatewayError
 from app.services.tracing import NodeSpan, get_trace_from_config
 from app.services.tavily_search import search_exercise_info
 from app.services.rag.config import get_rag_settings
+from app.services.rag.context_builder import build_source_labels
 from app.services.rag.knowledge_base import get_runtime_knowledge_base
 from app.services.rag.types import RagQuery
 from app.database.models import UserMetrics
@@ -422,7 +423,7 @@ async def knowledge_retrieval_node(state: AgentState, config: RunnableConfig) ->
                 f"user_input=\"{_preview_text(user_input)}\""
             )
             span.set_output({"enabled": False, "reason": reason})
-            return {"rag_context": "", "rag_hit_count": 0}
+            return {"rag_context": "", "rag_hit_count": 0, "rag_sources": []}
 
         settings = get_rag_settings()
         _log_workflow(
@@ -430,7 +431,21 @@ async def knowledge_retrieval_node(state: AgentState, config: RunnableConfig) ->
             f"artifact={settings.runtime_artifact_path} user_input=\"{_preview_text(user_input)}\""
         )
         knowledge_base = get_runtime_knowledge_base(settings)
-        pack = await knowledge_base.retrieve(RagQuery(query=user_input, intent=intent))
+        try:
+            pack = await knowledge_base.retrieve(RagQuery(query=user_input, intent=intent))
+        except Exception as exc:
+            _log_workflow(
+                f"rag_failed_continue_without_context reason={exc.__class__.__name__}: {exc} "
+                f"user_input=\"{_preview_text(user_input)}\""
+            )
+            span.set_output(
+                {
+                    "enabled": False,
+                    "fallback_mode": "llm_only",
+                    "error": f"{exc.__class__.__name__}: {exc}",
+                }
+            )
+            return {"rag_context": "", "rag_hit_count": 0, "rag_sources": []}
         hit_summaries = [
             {
                 "rank": hit.rank,
@@ -445,17 +460,20 @@ async def knowledge_retrieval_node(state: AgentState, config: RunnableConfig) ->
         _log_workflow(
             f"rag_done hit_count={len(pack.hits)} token_estimate={pack.token_estimate} hits={hit_summaries}"
         )
+        source_labels = build_source_labels(list(pack.hits), limit=3)
         span.set_output(
             {
                 "enabled": True,
                 "artifact_path": str(settings.runtime_artifact_path),
                 "hit_count": len(pack.hits),
                 "token_estimate": pack.token_estimate,
+                "source_labels": source_labels,
             }
         )
         return {
             "rag_context": pack.to_prompt_block(),
             "rag_hit_count": len(pack.hits),
+            "rag_sources": source_labels,
         }
 
 
@@ -875,6 +893,7 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     feedback = reflection.get("feedback", "")
     score = reflection.get("score", 85)
     rag_context = state.get("rag_context", "")
+    rag_sources = state.get("rag_sources", []) or []
     history = state.get("conversation_history", [])
     history_text = _format_history(history)
     recent_events = state.get("recent_events", [])
@@ -883,7 +902,10 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     if intent == "training_plan":
         sys_prompt = RESPONSE_TRAINING_SYSTEM
         ctx = _build_prompt_context(
-            agent_instruction=f"请向用户解释训练计划，并明确引用实际训练背景。审查结果: {feedback} (评分: {score})",
+            agent_instruction=(
+                f"请向用户解释训练计划，并明确引用实际训练背景。审查结果: {feedback} (评分: {score})。"
+                "如果上文提供了运动科学依据，请据此回答，但不要在正文里重复输出“参考来源”列表。"
+            ),
             user_profile=user_profile,
             mem0_context=mem0_context,
             recent_events=recent_events,
@@ -895,7 +917,7 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
     elif intent == "diet_log":
         sys_prompt = RESPONSE_DIET_SYSTEM
         ctx = _build_prompt_context(
-            agent_instruction="请确认本次饮食记录，并给出简明专业建议。",
+            agent_instruction="请确认本次饮食记录，并给出简明专业建议。如果上文提供了知识库依据，请据此回答，但不要在正文里重复输出“参考来源”列表。",
             user_profile=user_profile,
             mem0_context=mem0_context,
             recent_events=recent_events,
@@ -920,8 +942,9 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
         if _is_expert_mode(state.get("mode")) and rag_context.strip():
             chat_agent_instruction = (
                 "你当前处于专家模式。请优先依据上方提供的知识库证据块回答，"
-                "先给结论，再解释机制和恢复建议；自然提及 1-2 个来源标题或章节。"
+                "先给结论，再解释机制和恢复建议。"
                 "若知识库没有覆盖，再用通用知识补充，但不要假装引用了知识库。"
+                "系统会在消息末尾单独展示参考来源，所以不要在正文中再输出参考来源标题或列表。"
             )
         ctx = _build_prompt_context(
             agent_instruction=chat_agent_instruction,
@@ -974,9 +997,10 @@ async def response_builder_node(state: AgentState, config: RunnableConfig) -> Di
             "final_response_preview": final_response[:200],
             "final_response_len": len(final_response),
             "has_ui_card": ui is not None,
+            "rag_sources_count": len(rag_sources),
         })
 
-    return {"final_response": final_response, "ui_components": ui, "route": "end"}
+    return {"final_response": final_response, "ui_components": ui, "rag_sources": rag_sources, "route": "end"}
 
 
 # Build the StateGraph

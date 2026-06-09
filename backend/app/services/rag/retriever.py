@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections import defaultdict
 
 from app.services.rag.bm25 import BM25Index
@@ -63,29 +64,73 @@ class HybridRetriever:
         bm25_top_k = query.bm25_top_k or self.settings.bm25_top_k
 
         filters = _build_source_filters(query)
+        dense_hits: list[RagHit] = []
+        dense_error: Exception | None = None
+
         print(
             f"[rag] query_embedding_start text={query.query[:120]!r} "
             f"dense_top_k={dense_top_k} bm25_top_k={bm25_top_k} filters={filters}",
             flush=True,
         )
-        query_vector = (await self.embedder.embed_texts([query.query]))[0]
-        print(f"[rag] query_embedding_done dims={len(query_vector)}", flush=True)
-        dense_hits = self.vector_store.search(query_vector, top_k=dense_top_k, filters=filters)
-        bm25_hits = self.bm25.search(query.query, top_k=bm25_top_k)
-        bm25_hits = _filter_hits(bm25_hits, query)
+        try:
+            query_vector = (
+                await asyncio.wait_for(
+                    self.embedder.embed_texts([query.query]),
+                    timeout=max(1.0, float(self.settings.query_embedding_timeout_seconds)),
+                )
+            )[0]
+            print(f"[rag] query_embedding_done dims={len(query_vector)}", flush=True)
+            dense_hits = self.vector_store.search(query_vector, top_k=dense_top_k, filters=filters)
+        except Exception as exc:
+            dense_error = exc
+            print(
+                f"[rag] dense_retrieval_degraded reason={exc.__class__.__name__}: {exc}. "
+                f"falling_back=bm25_only",
+                flush=True,
+            )
+
+        try:
+            bm25_hits = self.bm25.search(query.query, top_k=bm25_top_k)
+            bm25_hits = _filter_hits(bm25_hits, query)
+        except Exception as exc:
+            print(
+                f"[rag] bm25_retrieval_failed reason={exc.__class__.__name__}: {exc}",
+                flush=True,
+            )
+            if dense_hits:
+                bm25_hits = []
+            else:
+                raise
+
         print(
             f"[rag] retrieval_candidates dense={len(dense_hits)} bm25={len(bm25_hits)}",
             flush=True,
         )
 
-        fused_hits = _reciprocal_rank_fusion(dense_hits, bm25_hits)
+        if dense_hits:
+            fused_hits = _reciprocal_rank_fusion(dense_hits, bm25_hits)
+        else:
+            fused_hits = self._dedupe_hits(bm25_hits)
+
         reranked = self.reranker.rerank(query, fused_hits, top_k=self.settings.rerank_top_k)
         print(
-            f"[rag] rerank_done fused={len(fused_hits)} reranked={len(reranked)} "
+            f"[rag] rerank_done mode={'hybrid' if dense_hits else 'bm25_only'} "
+            f"fused={len(fused_hits)} reranked={len(reranked)} "
             f"top_titles={[hit.chunk.title for hit in reranked[:5]]}",
             flush=True,
         )
         return build_context_pack(query, reranked, top_k=self.settings.context_top_k)
+
+    @staticmethod
+    def _dedupe_hits(hits: list[RagHit]) -> list[RagHit]:
+        seen: set[str] = set()
+        deduped: list[RagHit] = []
+        for hit in hits:
+            if hit.chunk.chunk_id in seen:
+                continue
+            seen.add(hit.chunk.chunk_id)
+            deduped.append(hit)
+        return deduped
 
 
 def _build_source_filters(query: RagQuery) -> dict | None:

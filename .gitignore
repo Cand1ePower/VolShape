@@ -68,3 +68,5 @@ backend/evals/reports/
 
 # Local RAG source corpus and parsed PDFs
 ragdata/
+.playwright-cli/
+output/

@@ -120,6 +120,7 @@ async def _live_agent_stream_with_db(
         "tavily_results": [],
         "rag_context": "",
         "rag_hit_count": 0,
+        "rag_sources": [],
         "reflection_result": {},
         "error_count": 0,
         "corrector_feedback": "",
@@ -161,13 +162,23 @@ async def _live_agent_stream_with_db(
 
         final_text = final_state_snapshot.get("final_response", "已完成处理。")
         ui_card = final_state_snapshot.get("ui_components")
+        response_sources = final_state_snapshot.get("rag_sources", []) or []
         _log_chat(
             f"stream_done session={_short_id(session_id)} intent={final_state_snapshot.get('intent')} "
             f"rag_hit_count={final_state_snapshot.get('rag_hit_count', 0)} "
-            f"final_response_len={len(final_text)} has_ui_card={ui_card is not None}"
+            f"final_response_len={len(final_text)} has_ui_card={ui_card is not None} "
+            f"source_count={len(response_sources)}"
         )
 
-        await save_message(user_id, session_id, "assistant", final_text, db, custom_card=ui_card)
+        await save_message(
+            user_id,
+            session_id,
+            "assistant",
+            final_text,
+            db,
+            custom_card=ui_card,
+            sources=response_sources,
+        )
 
         try:
             count_stmt = select(func.count(ConversationMessage.id)).where(ConversationMessage.user_id == user_id)
@@ -195,9 +206,11 @@ async def _live_agent_stream_with_db(
                 "session_id": session_id,
                 "has_ui_card": ui_card is not None,
                 "intent": final_state_snapshot.get("intent", ""),
+                "rag_hit_count": final_state_snapshot.get("rag_hit_count", 0),
+                "rag_sources": response_sources,
             },
         )
-        yield {"data": json.dumps({"event": "done"})}
+        yield {"data": json.dumps({"event": "done", "data": {"sources": response_sources}})}
 
     except Exception as exc:
         _log_chat(f"stream_error session={_short_id(session_id)} error={exc}")
@@ -211,7 +224,7 @@ async def _live_agent_stream_with_db(
         except Exception as save_exc:
             print(f"[chat_stream] failed to persist error message: {save_exc}")
         yield {"data": json.dumps({"event": "error", "data": payload})}
-        yield {"data": json.dumps({"event": "done"})}
+        yield {"data": json.dumps({"event": "done", "data": {"sources": []}})}
 
 
 async def live_agent_stream(

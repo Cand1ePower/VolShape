@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import {
-  ScrollView, View, Text, StyleSheet, useColorScheme, Platform,
+  ScrollView, View, Text, StyleSheet, Platform,
   TouchableOpacity, useWindowDimensions, Modal, ActivityIndicator, TextInput,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { BottomTabInset, MaxContentWidth, Spacing } from '@/constants/theme';
+import { useColorScheme } from '@/hooks/use-color-scheme';
 import { getBackendBaseUrl } from '@/services/api';
 
 const PLAN_CATALOG = [

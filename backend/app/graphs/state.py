@@ -26,6 +26,7 @@ class AgentState(TypedDict):
     tavily_results: List[Dict[str, Any]]
     rag_context: str
     rag_hit_count: int
+    rag_sources: List[str]
 
     # Evaluation / self-reflection
     reflection_result: Dict[str, Any]  # {"score": int, "feedback": str, "risk": str}

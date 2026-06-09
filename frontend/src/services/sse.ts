@@ -11,7 +11,7 @@ export interface SSEHandlers {
   onState?: (data: { node: string; message: string }) => void;
   onToken?: (text: string) => void;
   onUI?: (cardData: any) => void;
-  onDone?: () => void;
+  onDone?: (data?: { sources?: string[] }) => void;
   onError?: (error: any) => void;
   onOpen?: () => void;
 }
@@ -31,6 +31,7 @@ export function connectChatStream(
   handlers: SSEHandlers
 ): EventSource {
   let errorDelivered = false;
+  let doneDelivered = false;
   const eventSource = new EventSource(url, {
     method: 'POST',
     headers: {
@@ -107,9 +108,23 @@ export function connectChatStream(
     }
   };
 
-  const onDoneListener: EventSourceListener = () => {
-    handlers.onDone?.();
+  const deliverDone = (payload?: { sources?: string[] }) => {
+    if (doneDelivered) {
+      return;
+    }
+    doneDelivered = true;
+    handlers.onDone?.(payload);
     eventSource.close();
+  };
+
+  const onDoneListener: EventSourceListener = (event: any) => {
+    if (event?.data) {
+      try {
+        deliverDone(JSON.parse(event.data));
+        return;
+      } catch {}
+    }
+    deliverDone();
   };
 
   // Catch-all message listener — works on native where named SSE events
@@ -124,7 +139,7 @@ export function connectChatStream(
           case 'state': handlers.onState?.(payload.data); break;
           case 'token': handlers.onToken?.(payload.data?.text || ''); break;
           case 'ui': handlers.onUI?.(payload.data); break;
-          case 'done': handlers.onDone?.(); eventSource.close(); break;
+          case 'done': deliverDone(payload.data); break;
           case 'error': handlers.onError?.(payload.data); break;
           default: break;
         }

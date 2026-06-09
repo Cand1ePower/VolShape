@@ -1,0 +1,72 @@
+{
+  "suite": "volshape_rag_presentation",
+  "version": "2026-06-09.1",
+  "cases": [
+    {
+      "id": "rag_sources_deduplicate_and_format_pages",
+      "category": "rag_sources",
+      "limit": 3,
+      "hits": [
+        {
+          "rank": 1,
+          "title": "NSCA CSCS Guide",
+          "heading_path": ["Recovery", "DOMS"],
+          "page_start": 155
+        },
+        {
+          "rank": 2,
+          "title": "NSCA CSCS Guide",
+          "heading_path": ["Recovery", "DOMS"],
+          "page_start": 155
+        },
+        {
+          "rank": 3,
+          "title": "Personal Recovery Notes",
+          "heading_path": ["Fatigue", "Active Recovery"]
+        }
+      ],
+      "expected": {
+        "labels": [
+          "NSCA CSCS Guide · Recovery > DOMS (p.155)",
+          "Personal Recovery Notes · Fatigue > Active Recovery"
+        ]
+      }
+    },
+    {
+      "id": "rag_sources_limit_and_skip_redundant_heading",
+      "category": "rag_sources",
+      "limit": 3,
+      "hits": [
+        {
+          "rank": 1,
+          "title": "DOMS Note",
+          "heading_path": ["DOMS Note"]
+        },
+        {
+          "rank": 2,
+          "title": "Load Management",
+          "heading_path": ["Programming", "ACWR"],
+          "page_start": 88,
+          "page_end": 90
+        },
+        {
+          "rank": 3,
+          "title": "Hypertrophy Notes",
+          "heading_path": ["Volume", "Mechanical Tension"]
+        },
+        {
+          "rank": 4,
+          "title": "Should Not Appear",
+          "heading_path": ["Overflow"]
+        }
+      ],
+      "expected": {
+        "labels": [
+          "DOMS Note",
+          "Load Management · Programming > ACWR (p.88-90)",
+          "Hypertrophy Notes · Volume > Mechanical Tension"
+        ]
+      }
+    }
+  ]
+}

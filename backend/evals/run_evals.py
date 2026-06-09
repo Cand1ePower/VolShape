@@ -14,9 +14,11 @@ if str(BACKEND_ROOT) not in sys.path:
 from app.prompt_versions import get_prompt_manifest, iter_prompt_specs  # noqa: E402
 from app.services.media_analysis import fallback_media_gate  # noqa: E402
 from app.services.memory import MEMORY_EXTRACTION_SYSTEM_FLEX, should_capture_long_term_memory  # noqa: E402
+from app.services.rag.context_builder import build_source_labels  # noqa: E402
+from app.services.rag.types import RagChunk, RagHit, RagSourceType  # noqa: E402
 
 
-CASES_PATH = Path(__file__).resolve().parent / "cases" / "core_cases.json"
+CASES_DIR = Path(__file__).resolve().parent / "cases"
 REPORTS_DIR = Path(__file__).resolve().parent / "reports"
 
 
@@ -79,6 +81,65 @@ def _run_prompt_audit_case(case: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def _build_case_hit(payload: Dict[str, Any], default_rank: int) -> RagHit:
+    return RagHit(
+        chunk=RagChunk(
+            chunk_id=str(payload.get("chunk_id", f"case_chunk_{default_rank}")),
+            source_id=str(payload.get("source_id", f"case_source_{default_rank}")),
+            source_type=RagSourceType(str(payload.get("source_type", "textbook"))),
+            title=str(payload.get("title", "Untitled Source")),
+            text=str(payload.get("text", "Sample text")),
+            heading_path=tuple(payload.get("heading_path", []) or ()),
+            page_start=payload.get("page_start"),
+            page_end=payload.get("page_end"),
+        ),
+        score=float(payload.get("score", 1.0)),
+        score_type=str(payload.get("score_type", "hybrid")),
+        rank=int(payload.get("rank", default_rank)),
+        source=str(payload.get("source", payload.get("title", "case"))),
+        metadata=payload.get("metadata", {}) or {},
+    )
+
+
+def _run_rag_sources_case(case: Dict[str, Any]) -> Dict[str, Any]:
+    hits = [_build_case_hit(hit, index + 1) for index, hit in enumerate(case.get("hits", []))]
+    actual_labels = build_source_labels(hits, limit=int(case.get("limit", 3)))
+    expected_labels = case["expected"].get("labels", [])
+    failures = []
+    if actual_labels != expected_labels:
+        failures.append(f"labels mismatch: expected {expected_labels!r}, got {actual_labels!r}")
+    return {
+        "actual": {
+            "labels": actual_labels,
+            "label_count": len(actual_labels),
+        },
+        "passed": not failures,
+        "failures": failures,
+    }
+
+
+def _load_case_suites() -> List[Dict[str, Any]]:
+    suites: List[Dict[str, Any]] = []
+    for path in sorted(CASES_DIR.glob("*.json")):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["_case_file"] = path.name
+        suites.append(payload)
+    return suites
+
+
+def _summarize_results(results: List[Dict[str, Any]], key: str) -> Dict[str, Dict[str, int]]:
+    summary: Dict[str, Dict[str, int]] = {}
+    for item in results:
+        bucket = str(item.get(key, "unknown"))
+        data = summary.setdefault(bucket, {"total": 0, "passed": 0, "failed": 0})
+        data["total"] += 1
+        if item["passed"]:
+            data["passed"] += 1
+        else:
+            data["failed"] += 1
+    return summary
+
+
 def _recommendation(case: Dict[str, Any], failures: List[str]) -> str | None:
     if not failures:
         return None
@@ -89,42 +150,60 @@ def _recommendation(case: Dict[str, Any], failures: List[str]) -> str | None:
         return "Strengthen memory extraction prompt and persistence path for dynamic state/injury/event keys."
     if category == "prompt_audit" and case.get("prompt_name") == "movement_response":
         return "Add evidence constraints so movement responses do not identify exercises from pose geometry alone."
+    if category == "rag_sources":
+        return "Keep source labels deterministic, deduplicated, and compact so expert-mode citations stay readable."
     return "Inspect this case and add a targeted prompt or routing constraint."
 
 
 def run_all_evals() -> Dict[str, Any]:
-    suite = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    suites = _load_case_suites()
     results = []
-    for case in suite["cases"]:
-        category = case["category"]
-        if category == "media_gate":
-            result = _run_media_gate_case(case)
-        elif category == "memory_prompt":
-            result = _run_memory_prompt_case(case)
-        elif category == "prompt_audit":
-            result = _run_prompt_audit_case(case)
-        else:
-            result = {
-                "actual": {},
-                "passed": False,
-                "failures": [f"Unsupported eval category: {category}"],
-            }
-        result["id"] = case["id"]
-        result["category"] = category
-        result["recommendation"] = _recommendation(case, result["failures"])
-        results.append(result)
+    for suite in suites:
+        for case in suite["cases"]:
+            category = case["category"]
+            if category == "media_gate":
+                result = _run_media_gate_case(case)
+            elif category == "memory_prompt":
+                result = _run_memory_prompt_case(case)
+            elif category == "prompt_audit":
+                result = _run_prompt_audit_case(case)
+            elif category == "rag_sources":
+                result = _run_rag_sources_case(case)
+            else:
+                result = {
+                    "actual": {},
+                    "passed": False,
+                    "failures": [f"Unsupported eval category: {category}"],
+                }
+            result["id"] = case["id"]
+            result["category"] = category
+            result["suite"] = suite["suite"]
+            result["suite_version"] = suite["version"]
+            result["case_file"] = suite.get("_case_file")
+            result["recommendation"] = _recommendation(case, result["failures"])
+            results.append(result)
 
     passed = sum(1 for item in results if item["passed"])
     failed = len(results) - passed
     return {
-        "suite": suite["suite"],
-        "suite_version": suite["version"],
+        "suite": "volshape_offline_eval_bundle",
+        "suite_files": [
+            {
+                "suite": suite["suite"],
+                "version": suite["version"],
+                "case_file": suite.get("_case_file"),
+                "case_count": len(suite.get("cases", [])),
+            }
+            for suite in suites
+        ],
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "prompt_manifest": get_prompt_manifest(),
         "summary": {
             "total": len(results),
             "passed": passed,
             "failed": failed,
+            "by_category": _summarize_results(results, "category"),
+            "by_suite": _summarize_results(results, "suite"),
         },
         "results": results,
     }

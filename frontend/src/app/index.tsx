@@ -196,6 +196,10 @@ export default function ChatScreen() {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const sessionIdRef = useRef<string | null>(sessionId);
   const historyRequestRef = useRef(0);
+  const activeBotMessageIdRef = useRef<string | null>(null);
+  const pendingTokenBufferRef = useRef('');
+  const pendingStreamDoneRef = useRef(false);
+  const tokenFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   const floatingBaseBottom = Platform.OS === 'ios' ? 80 : 62;
   const keyboardGap = Platform.OS === 'ios' ? 8 : 42;
@@ -227,6 +231,13 @@ export default function ChatScreen() {
     setTimeout(() => {
       scrollViewRef.current?.scrollToEnd({ animated });
     }, 80);
+  }, []);
+
+  const stopTokenFlush = useCallback(() => {
+    if (tokenFlushTimerRef.current) {
+      clearInterval(tokenFlushTimerRef.current);
+      tokenFlushTimerRef.current = null;
+    }
   }, []);
 
   const showWelcomeMessage = useCallback((text: string) => {
@@ -297,6 +308,68 @@ export default function ChatScreen() {
       setIsSessionLoading(false);
     }
   }, [getValidToken, isLoggedIn, setSessionId]);
+
+  const finalizeVisibleStream = useCallback(() => {
+    pendingStreamDoneRef.current = false;
+    setIsGenerating(false);
+    setAgentStatus(null);
+    refreshSessions();
+    scrollToBottom(true);
+  }, [refreshSessions, scrollToBottom]);
+
+  const resetTokenStreamingState = useCallback(() => {
+    stopTokenFlush();
+    activeBotMessageIdRef.current = null;
+    pendingTokenBufferRef.current = '';
+    pendingStreamDoneRef.current = false;
+    currentBotTextRef.current = '';
+  }, [stopTokenFlush]);
+
+  const ensureTokenFlush = useCallback(
+    (botMessageId: string) => {
+      activeBotMessageIdRef.current = botMessageId;
+      if (tokenFlushTimerRef.current) {
+        return;
+      }
+
+      tokenFlushTimerRef.current = setInterval(() => {
+        const activeMessageId = activeBotMessageIdRef.current;
+        if (!activeMessageId) {
+          stopTokenFlush();
+          return;
+        }
+
+        if (!pendingTokenBufferRef.current) {
+          if (pendingStreamDoneRef.current) {
+            stopTokenFlush();
+            finalizeVisibleStream();
+          }
+          return;
+        }
+
+        const nextSlice = pendingTokenBufferRef.current.slice(0, 4);
+        pendingTokenBufferRef.current = pendingTokenBufferRef.current.slice(4);
+        currentBotTextRef.current += nextSlice;
+
+        setMessages((prev) =>
+          prev.map((msg) => (msg.id === activeMessageId ? { ...msg, text: currentBotTextRef.current } : msg))
+        );
+        scrollToBottom(false);
+
+        if (!pendingTokenBufferRef.current && pendingStreamDoneRef.current) {
+          stopTokenFlush();
+          finalizeVisibleStream();
+        }
+      }, 28);
+    },
+    [finalizeVisibleStream, scrollToBottom, stopTokenFlush]
+  );
+
+  useEffect(() => {
+    return () => {
+      stopTokenFlush();
+    };
+  }, [stopTokenFlush]);
 
   const handleOpenSessionModal = useCallback(() => {
     setIsSessionModalVisible(true);
@@ -705,7 +778,8 @@ export default function ChatScreen() {
 
     const botMessageId = Math.random().toString(36).slice(2);
     setMessages((prev) => [...prev, { id: botMessageId, text: '', isBot: true, createdAt: new Date() }]);
-    currentBotTextRef.current = '';
+    resetTokenStreamingState();
+    activeBotMessageIdRef.current = botMessageId;
 
     try {
       esRef.current?.close?.();
@@ -725,11 +799,8 @@ export default function ChatScreen() {
             scrollToBottom(true);
           },
           onToken: (tokenText) => {
-            currentBotTextRef.current += tokenText;
-            setMessages((prev) =>
-              prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: currentBotTextRef.current } : msg))
-            );
-            scrollToBottom(false);
+            pendingTokenBufferRef.current += tokenText;
+            ensureTokenFlush(botMessageId);
           },
           onUI: (cardData) => {
             setMessages((prev) =>
@@ -738,12 +809,13 @@ export default function ChatScreen() {
             scrollToBottom(true);
           },
           onDone: () => {
-            setIsGenerating(false);
-            setAgentStatus(null);
-            refreshSessions();
-            scrollToBottom(true);
+            pendingStreamDoneRef.current = true;
+            if (!pendingTokenBufferRef.current) {
+              finalizeVisibleStream();
+            }
           },
           onError: (err) => {
+            resetTokenStreamingState();
             setIsGenerating(false);
             setAgentStatus(null);
             esRef.current?.close?.();
@@ -757,6 +829,7 @@ export default function ChatScreen() {
         }
       );
     } catch (error: any) {
+      resetTokenStreamingState();
       setIsGenerating(false);
       setAgentStatus(null);
       const message = error?.message || '???????????';
@@ -764,7 +837,7 @@ export default function ChatScreen() {
         prev.map((msg) => (msg.id === botMessageId ? { ...msg, text: `?? ${message}` } : msg))
       );
     }
-  }, [formatProcessingMessage, getValidToken, inputMinHeight, inputText, isGenerating, mode, pendingAttachment, refreshSessions, scrollToBottom, sessionId, useTrainingSheet]);
+  }, [ensureTokenFlush, finalizeVisibleStream, formatProcessingMessage, getValidToken, inputMinHeight, inputText, isGenerating, mode, pendingAttachment, refreshSessions, resetTokenStreamingState, scrollToBottom, sessionId, useTrainingSheet]);
   useEffect(() => {
     if (!isLoggedIn) {
       resetPlan();

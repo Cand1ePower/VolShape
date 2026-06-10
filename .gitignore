@@ -41,6 +41,7 @@ frontend/platform-tools/
 *.swo
 .claude/
 docs/
+# interview/private prep docs stay local under docs/
 
 # ── OS ──
 .DS_Store

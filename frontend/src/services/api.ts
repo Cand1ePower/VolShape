@@ -12,7 +12,7 @@ export const getBackendBaseUrl = () => {
       if (hostname === 'localhost' || hostname === '127.0.0.1') {
         return 'http://localhost:8000';
       }
-      return `${protocol}//${hostname}:8000`.replace(/\/$/, '');
+      return `${protocol}//${hostname}`.replace(/\/$/, '');
     }
     return 'http://localhost:8000';
   }

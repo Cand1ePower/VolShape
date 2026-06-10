@@ -69,6 +69,11 @@ function AppTabs() {
             ? ({ backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' } as any)
             : {}),
         },
+        tabBarItemStyle: {
+          flex: 1,
+          justifyContent: 'center',
+          alignItems: 'center',
+        },
       }}
     >
       <Tabs.Screen
@@ -96,6 +101,12 @@ function AppTabs() {
           tabBarIcon: ({ color, focused }) => (
             <TabIcon name="person-circle" focused={focused} color={color} size={23} />
           ),
+        }}
+      />
+      <Tabs.Screen
+        name="coach"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

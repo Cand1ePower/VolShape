@@ -18,7 +18,7 @@ export const ThemeContext = createContext<ThemeContextValue | null>(null);
 
 function readStoredPreference(): ThemePreference {
   if (Platform.OS !== 'web' || typeof window === 'undefined') {
-    return 'system';
+    return 'dark';
   }
 
   try {
@@ -28,7 +28,7 @@ function readStoredPreference(): ThemePreference {
     }
   } catch {}
 
-  return 'system';
+  return 'dark';
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {

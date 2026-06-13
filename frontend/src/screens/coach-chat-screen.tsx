@@ -89,9 +89,9 @@ const LOGIN_WELCOME_TEXT = '你好，我是 VolShape AI 教练。请先登录后
 const HISTORY_ERROR_TEXT = '你好，我是 VolShape AI 教练。当前聊天记录加载失败，请稍后重试。';
 
 const WEB_PROMPT_SUGGESTIONS = [
-  '根据我的目标生成今天的训练计划',
-  '这是我今天的晚饭，帮我估算热量和三大营养',
-  '我昨天做了哪些训练，实际完成了多少组？',
+  '按我的目标安排今天 45 分钟训练',
+  '看这顿饭够不够干净，顺便估算热量',
+  '结合我最近状态，给我一个恢复日建议',
 ];
 
 function parseInlineBold(text: string) {
@@ -162,11 +162,10 @@ export default function ChatScreen() {
   const navigation = useNavigation();
 
   const dynamicFontSize = width < 375 ? 14 : 15;
-  const [isWebMounted, setIsWebMounted] = useState(Platform.OS !== 'web');
   const isWeb = Platform.OS === 'web';
-  const isMobileWeb = isWebMounted && isWeb && width < 768;
-  const isTabletWeb = isWebMounted && isWeb && width >= 768;
-  const isDesktopWeb = isWebMounted && isWeb && width >= 1024;
+  const isMobileWeb = isWeb && width < 768;
+  const isTabletWeb = isWeb && width >= 768 && width < 1100;
+  const isDesktopWeb = isWeb && width >= 1100;
 
   const { sessionId, isLoggedIn, isLoading, getValidToken, setSessionId } = useAuth();
   const { resetPlan, syncWorkoutOnLogin } = usePlan();
@@ -205,11 +204,11 @@ export default function ChatScreen() {
 
   const floatingBaseBottom = Platform.OS === 'ios' ? 80 : 62;
   const keyboardGap = Platform.OS === 'ios' ? 8 : 42;
-  const headerMaxWidth = isDesktopWeb ? 1280 : isTabletWeb ? 920 : isMobileWeb ? 420 : 780;
-  const contentMaxWidth = isDesktopWeb ? 1280 : isTabletWeb ? 920 : isMobileWeb ? 420 : 760;
-  const composerMaxWidth = isDesktopWeb ? 960 : isTabletWeb ? 860 : isMobileWeb ? 420 : 780;
-  const floatingBottom = isDesktopWeb ? 24 : isMobileWeb ? 86 : floatingBaseBottom;
-  const chatBottomInset = isDesktopWeb ? 250 : isTabletWeb ? 228 : isMobileWeb ? 180 : 215;
+  const headerMaxWidth = isDesktopWeb ? 1240 : isTabletWeb ? 960 : isMobileWeb ? 420 : 780;
+  const contentMaxWidth = isDesktopWeb ? 1240 : isTabletWeb ? 960 : isMobileWeb ? 420 : 760;
+  const composerMaxWidth = isDesktopWeb ? 920 : isTabletWeb ? 860 : isMobileWeb ? 420 : 780;
+  const floatingBottom = isDesktopWeb ? 18 : isMobileWeb ? 86 : floatingBaseBottom;
+  const chatBottomInset = isDesktopWeb ? 228 : isTabletWeb ? 224 : isMobileWeb ? 180 : 215;
 
   const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
   const borderCol = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.08)';
@@ -915,12 +914,6 @@ export default function ChatScreen() {
   }, [getValidToken, isLoading, isLoggedIn, sessionId, showWelcomeMessage]);
 
   useEffect(() => {
-    if (Platform.OS === 'web') {
-      setIsWebMounted(true);
-    }
-  }, []);
-
-  useEffect(() => {
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current);
       if (esRef.current) esRef.current.close();
@@ -945,7 +938,7 @@ export default function ChatScreen() {
       >
         <View style={[styles.headerFrame, { maxWidth: headerMaxWidth }]}>
         <View style={styles.headerRow}>
-          <View style={[styles.headerLeft, isMobileWeb && { paddingLeft: 140 }]}>
+          <View style={styles.headerLeft}>
             <Text style={[styles.headerTitle, { color: textCol }]}>VolShape</Text>
             <View style={styles.headerSubtitleRow}>
               <View style={[styles.statusDot, { backgroundColor: isGenerating ? '#34C759' : isLoggedIn ? '#007AFF' : '#AEAEB2' }]} />
@@ -1011,45 +1004,22 @@ export default function ChatScreen() {
         contentInsetAdjustmentBehavior="automatic"
       >
         <View style={[styles.chatBody, isDesktopWeb ? styles.chatBodyDesktop : null, { maxWidth: contentMaxWidth }]}>
-          {isDesktopWeb && (
-            <View style={[styles.desktopRail, { backgroundColor: frostedBg, borderColor: borderCol }]}>
-              <Text style={[styles.desktopRailEyebrow, { color: subTextCol }]}>WEB 演示</Text>
-              <Text style={[styles.desktopRailTitle, { color: textCol }]}>VolShape AI 健身教练</Text>
-              <Text style={[styles.desktopRailText, { color: subTextCol }]}>
-                在电脑端会保持更宽的消息区、固定操作区和更清晰的对话结构，方便演示多轮对话、训练计划和饮食识别。
-              </Text>
-              <View style={[styles.desktopRailCard, { backgroundColor: 'rgba(255,255,255,0.03)' }]}>
-                <Text style={[styles.desktopRailCardLabel, { color: subTextCol }]}>当前模式</Text>
-                <Text style={[styles.desktopRailCardValue, { color: textCol }]}>{mode === 'quick' ? '快速模式' : '专家模式'}</Text>
-              </View>
-              <View style={[styles.desktopRailCard, { backgroundColor: 'rgba(255,255,255,0.03)' }]}>
-                <Text style={[styles.desktopRailCardLabel, { color: subTextCol }]}>上传能力</Text>
-                <Text style={[styles.desktopRailCardValue, { color: textCol }]}>图片热量分析 / 视频姿态分析</Text>
-              </View>
-              <View style={[styles.desktopRailCard, { backgroundColor: 'rgba(255,255,255,0.03)' }]}>
-                <Text style={[styles.desktopRailCardLabel, { color: subTextCol }]}>当前对话</Text>
-                <Text style={[styles.desktopRailCardValue, { color: textCol }]} numberOfLines={2}>
-                  {isLoggedIn ? currentSessionTitle : '未登录访客会话'}
-                </Text>
-              </View>
-            </View>
-          )}
-        <View style={[styles.chatMaxWidth, { maxWidth: isDesktopWeb ? 960 : '100%' }]}>
+        <View style={[styles.chatMaxWidth, { maxWidth: isDesktopWeb ? composerMaxWidth : '100%' }]}>
           {showIntroHero && (
             <View
               style={[
                 styles.emptyChatHero,
                 isMobileWeb ? styles.emptyChatHeroMobile : null,
                 {
-                  backgroundColor: 'rgba(24,24,28,0.9)',
+                  backgroundColor: isDark ? 'rgba(24,24,28,0.9)' : 'rgba(255,255,255,0.92)',
                   borderColor: borderCol,
                 },
               ]}
             >
               <Text style={[styles.emptyChatEyebrow, { color: subTextCol }]}>VOLSHAPE COACH</Text>
-              <Text style={[styles.emptyChatTitle, isMobileWeb ? styles.emptyChatTitleMobile : null, { color: textCol }]}>从一句话开始今天的训练或饮食记录</Text>
+              <Text style={[styles.emptyChatTitle, isMobileWeb ? styles.emptyChatTitleMobile : null, { color: textCol }]}>从一句话开始，安排今天的训练节奏。</Text>
               <Text style={[styles.emptyChatDescription, isMobileWeb ? styles.emptyChatDescriptionMobile : null, { color: subTextCol }]}>
-                你可以直接提训练目标、恢复状态、饮食照片，或者追问昨天的训练完成情况。专家模式下也支持图片与视频分析。
+                你可以直接说目标、状态和时间安排，也可以上传饮食照片。VolShape 会把信息整理成更清晰、更容易执行的建议。
               </Text>
               <View style={styles.emptyChatSuggestionList}>
                 {WEB_PROMPT_SUGGESTIONS.map((suggestion) => (
@@ -1059,7 +1029,7 @@ export default function ChatScreen() {
                     style={[
                       styles.emptyChatSuggestion,
                       {
-                        backgroundColor: 'rgba(255,255,255,0.04)',
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(15,23,42,0.03)',
                         borderColor: borderCol,
                       },
                     ]}
@@ -1167,11 +1137,11 @@ export default function ChatScreen() {
           styles.floatingControls,
           {
             bottom: floatingBottom,
-            width: isDesktopWeb ? 960 : undefined,
-            maxWidth: isDesktopWeb ? 960 : undefined,
+            width: isDesktopWeb ? composerMaxWidth : undefined,
+            maxWidth: isDesktopWeb ? composerMaxWidth : undefined,
             left: isDesktopWeb ? '50%' : 0,
             right: isDesktopWeb ? 'auto' : 0,
-            marginLeft: isDesktopWeb ? -480 : 0,
+            marginLeft: isDesktopWeb ? -(composerMaxWidth / 2) : 0,
             paddingHorizontal: isDesktopWeb ? 0 : 16,
             transform: [
               {
@@ -1613,14 +1583,14 @@ const styles = StyleSheet.create({
     width: '100%',
   },
   desktopRail: {
-    width: 208,
+    width: 236,
     borderWidth: 0.5,
-    borderRadius: 24,
-    padding: 14,
-    gap: 10,
+    borderRadius: 28,
+    padding: 16,
+    gap: 12,
     position: 'fixed',
-    left: 8,
-    bottom: 32,
+    left: 128,
+    bottom: 24,
   } as any,
   desktopRailEyebrow: {
     fontSize: 11,
@@ -1628,16 +1598,17 @@ const styles = StyleSheet.create({
     letterSpacing: 0.4,
   },
   desktopRailTitle: {
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '800',
-    lineHeight: 24,
+    lineHeight: 28,
+    letterSpacing: -0.6,
   },
   desktopRailText: {
     fontSize: 12,
-    lineHeight: 18,
+    lineHeight: 20,
   },
   desktopRailCard: {
-    borderRadius: 16,
+    borderRadius: 18,
     padding: 12,
     gap: 5,
   },
@@ -1650,17 +1621,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     lineHeight: 20,
   },
-  chatMaxWidth: { width: '100%', maxWidth: 760, gap: 18, alignSelf: 'center' },
+  chatMaxWidth: { width: '100%', maxWidth: 760, gap: 20, alignSelf: 'center' },
   emptyChatHero: {
     width: '100%',
     borderWidth: 0.5,
-    borderRadius: 28,
-    padding: 24,
-    gap: 14,
-    marginBottom: 10,
+    borderRadius: 30,
+    padding: 28,
+    gap: 16,
+    marginBottom: 12,
   },
   emptyChatHeroMobile: {
-    padding: 20,
+    padding: 18,
     borderRadius: 24,
   },
   emptyChatEyebrow: {
@@ -1669,20 +1640,21 @@ const styles = StyleSheet.create({
     letterSpacing: 0.5,
   },
   emptyChatTitle: {
-    fontSize: 28,
+    fontSize: 32,
     fontWeight: '800',
-    lineHeight: 36,
-    maxWidth: 520,
+    lineHeight: 40,
+    maxWidth: 560,
+    letterSpacing: -1,
   },
   emptyChatTitleMobile: {
-    fontSize: 20,
-    lineHeight: 28,
+    fontSize: 22,
+    lineHeight: 30,
     maxWidth: '100%',
   },
   emptyChatDescription: {
-    fontSize: 14,
-    lineHeight: 22,
-    maxWidth: 620,
+    fontSize: 15,
+    lineHeight: 24,
+    maxWidth: 640,
   },
   emptyChatDescriptionMobile: {
     fontSize: 13,
@@ -1759,7 +1731,7 @@ const styles = StyleSheet.create({
     zIndex: 20,
     alignSelf: 'center',
     width: '100%',
-    maxWidth: 780,
+    maxWidth: 920,
     paddingHorizontal: 16,
     paddingTop: 6,
     gap: 8,
@@ -1842,7 +1814,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     paddingHorizontal: 16,
-    paddingVertical: 8,
+    paddingVertical: 10,
     shadowColor: '#007AFF',
     shadowOffset: { width: 0, height: -3 },
     shadowOpacity: 0.18,

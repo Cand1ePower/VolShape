@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react';
-import { Image } from 'expo-image';
 import { Ionicons } from '@expo/vector-icons';
+import { Image } from 'expo-image';
+import { router } from 'expo-router';
+import { useState } from 'react';
 import {
   ActivityIndicator,
+  Linking,
   Platform,
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
   TextInput,
-  TouchableOpacity,
   View,
   useWindowDimensions,
 } from 'react-native';
@@ -16,37 +18,38 @@ import {
 import { useThemeController } from '@/contexts/ThemeContext';
 import { fetchPublicHealth, runPublicRagTest } from '@/services/public';
 
-const APP_DOWNLOAD_URL = process.env.EXPO_PUBLIC_APP_DOWNLOAD_URL?.trim() || '';
-const DEFAULT_DOWNLOAD_URL = 'https://expo.dev/go';
-const APP_DOWNLOAD_HINT =
-  '当前提供的是测试版入口。若你本地用 Expo Go 调试，可直接在命令行扫码进入移动端。';
-
+const APK_DOWNLOAD_URL =
+  process.env.EXPO_PUBLIC_APP_DOWNLOAD_URL?.trim() ||
+  'https://expo.dev/artifacts/eas/aXaYpUHmZtv2RJ22Nps34F0s8DmTCzdMyBuZ0tOxr1w.apk';
 
 const FEATURE_CARDS = [
   {
-    label: '训练',
-    title: '把计划生成、执行反馈、动态修正放进同一条对话里',
-    body: '不需要反复切表单。用户只要描述目标、恢复状态和当天安排，系统就能持续更新训练建议。',
+    title: '训练',
+    bodyTitle: '把计划生成、执行反馈、动态修正放进同一条对话里',
+    body: '不需要反复切换表单，用户只要描述目标，系统就能持续更新建议。',
+    icon: 'bar-chart-outline',
   },
   {
-    label: '饮食',
-    title: '用拍照和对话代替手动录卡路里',
-    body: '识别食物、估算热量、记录三大营养素，再把结果回写到用户长期画像和后续建议里。',
+    title: '饮食',
+    bodyTitle: '用拍照和对话代替手动录卡路里',
+    body: '识别食物、计算热量，再把结果写回到用户长期画像和后续建议里。',
+    icon: 'camera-outline',
   },
   {
-    label: '记忆',
-    title: '记住用户的身体状态、偏好变化和长期约束',
-    body: '让 AI 教练不是一次性回答器，而是能随着用户状态演化的长期陪练系统。',
+    title: '记忆',
+    bodyTitle: '记住用户的身体状态、偏好变化和长期约束',
+    body: '让 AI 教练不是一次性回答器，而是能随状态变化的长期陪伴系统。',
+    icon: 'git-network-outline',
   },
 ];
 
 function formatSourceMeta(source: { page_start?: number | null; page_end?: number | null; heading_path: string[] }) {
-  const heading = source.heading_path?.slice(-2).join(' > ');
+  const heading = source.heading_path?.slice(-2).join(' / ');
   let page = '';
   if (source.page_start) {
-    page = `p.${source.page_start}`;
+    page = `P.${source.page_start}`;
     if (source.page_end && source.page_end !== source.page_start) {
-      page = `p.${source.page_start}-${source.page_end}`;
+      page = `P.${source.page_start}-${source.page_end}`;
     }
   }
 
@@ -54,29 +57,57 @@ function formatSourceMeta(source: { page_start?: number | null; page_end?: numbe
   return heading || page || '知识库片段';
 }
 
+async function openExternal(url: string) {
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return;
+  }
+  await Linking.openURL(url);
+}
+
+function HeaderButton({
+  label,
+  icon,
+  onPress,
+  textColor,
+}: {
+  label?: string;
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  textColor: string;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      style={({ hovered, pressed }) => [
+        styles.glassButton,
+        {
+          opacity: pressed ? 0.92 : 1,
+          backgroundColor: hovered ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.03)',
+          borderColor: hovered ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.08)',
+        },
+      ]}
+    >
+      <Ionicons name={icon} size={label ? 16 : 18} color="#8E8E93" />
+      {label ? <Text style={[styles.headerButtonText, { color: textColor }]}>{label}</Text> : null}
+    </Pressable>
+  );
+}
+
 export default function WebEntryPage() {
   const { width } = useWindowDimensions();
   const { isDark, toggleTheme } = useThemeController();
   const [healthLoading, setHealthLoading] = useState(false);
-  const [healthResult, setHealthResult] = useState<string>('');
+  const [healthResult, setHealthResult] = useState('');
   const [ragQuery, setRagQuery] = useState('DOMS 延迟性肌肉酸痛到底是什么，应该怎么恢复？');
   const [ragLoading, setRagLoading] = useState(false);
   const [ragError, setRagError] = useState('');
   const [ragResult, setRagResult] = useState<Awaited<ReturnType<typeof runPublicRagTest>> | null>(null);
 
-  const isWide = width >= 1160;
-  const isTablet = width >= 768;
-  const shellWidth = isWide ? 1240 : 1040;
-  const effectiveDownloadUrl = APP_DOWNLOAD_URL || DEFAULT_DOWNLOAD_URL;
-  const allowDownload = !!APP_DOWNLOAD_URL;
-  const pageBg = isDark ? '#09090B' : '#F3F4F6';
-  const shellBg = isDark ? '#0F1117' : '#FFFFFF';
-  const shellBorder = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
-
-  const downloadLabel = useMemo(
-    () => (allowDownload ? '下载 APP' : '下载 APP'),
-    [allowDownload]
-  );
+  const isMobile = width < 768;
+  const textPrimary = isDark ? '#E5E1E4' : '#E5E1E4';
+  const textSecondary = '#8E8E93';
+  const textMuted = '#585961';
 
   const handleHealthCheck = async () => {
     setHealthLoading(true);
@@ -87,7 +118,7 @@ export default function WebEntryPage() {
         .join(' · ');
       setHealthResult(`${payload.status}${checks ? ` · ${checks}` : ''}`);
     } catch (error: any) {
-      setHealthResult(error?.message || '健康检查失败');
+      setHealthResult(error?.message || '服务检查失败');
     } finally {
       setHealthLoading(false);
     }
@@ -107,7 +138,7 @@ export default function WebEntryPage() {
       const retryAfter = Number(error?.retryAfter || 0);
       if (retryAfter > 0) {
         const minutes = Math.ceil(retryAfter / 60);
-        setRagError(`公开测试频率过高，请约 ${minutes} 分钟后再试。`);
+        setRagError(`公开体验请求过于频繁，请约 ${minutes} 分钟后再试。`);
       } else {
         setRagError(error?.message || '知识库测试失败');
       }
@@ -117,209 +148,203 @@ export default function WebEntryPage() {
   };
 
   return (
-    <ScrollView style={[styles.page, { backgroundColor: pageBg }]} contentContainerStyle={styles.pageContent}>
-      <View style={[styles.shell, { maxWidth: shellWidth, backgroundColor: shellBg, borderColor: shellBorder }]}>
-        <View style={styles.navRow}>
-          <View style={styles.brandRow}>
-            <Image source={require('@/assets/images/icon.png')} style={styles.brandIcon} contentFit="cover" />
+    <ScrollView
+      style={styles.page}
+      contentContainerStyle={styles.pageScrollContent}
+      showsVerticalScrollIndicator={false}
+    >
+      <View pointerEvents="none" style={styles.backgroundWaves}>
+        <View style={styles.ambientBandOne} />
+        <View style={styles.ambientBandTwo} />
+        <View style={styles.wavePrimary} />
+        <View style={styles.waveSecondary} />
+        <View style={styles.waveAccentOne} />
+        <View style={styles.waveAccentTwo} />
+        <View style={styles.overlayFade} />
+      </View>
+
+      <View style={styles.pageShell}>
+        <View style={[styles.header, isMobile ? styles.headerMobile : null]}>
+          <View style={styles.logoWrap}>
+            <View style={styles.logoBadge}>
+              <Image source={require('../../assets/images/icon.png')} style={styles.logoImage} contentFit="cover" />
+            </View>
             <View>
-              <Text style={styles.brandName}>VolShape</Text>
-              <Text style={styles.brandMeta}>AI-native 健身教练</Text>
+              <Text style={styles.logoTitle}>VolShape</Text>
+              <Text style={styles.logoMeta}>AI-native 健身教练</Text>
             </View>
           </View>
 
-          <View style={styles.navActions}>
-            <TouchableOpacity
-              activeOpacity={0.88}
-              style={[styles.themeButton, isDark ? styles.themeButtonDark : styles.themeButtonLight]}
-              onPress={toggleTheme}
-            >
-              <Ionicons name={isDark ? 'sunny-outline' : 'moon-outline'} size={16} color={isDark ? '#E8F2FF' : '#0F172A'} />
-            </TouchableOpacity>
-            <TouchableOpacity activeOpacity={0.88} style={styles.navButton} onPress={handleHealthCheck}>
-              {healthLoading ? (
-                <ActivityIndicator size="small" color="#E8F2FF" />
-              ) : (
-                <Ionicons name="pulse-outline" size={16} color="#E8F2FF" />
-              )}
-              <Text style={styles.navButtonText}>服务器健康</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.9}
-              style={styles.ghostButton}
-              onPress={() => window.location.assign('/coach')}
-            >
-              <Ionicons name="open-outline" size={16} color="#D8E6FF" />
-              <Text style={styles.ghostButtonText}>体验网页版</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.heroSection}>
-          <View style={styles.heroTopRow}>
-            <View style={styles.heroBadge}>
-              <Text style={styles.heroBadgeText}>对话驱动训练、饮食、记忆闭环</Text>
-            </View>
-            <View style={styles.heroMiniStat}>
-              <Ionicons name="sparkles-outline" size={15} color="#8BC6FF" />
-              <Text style={styles.heroMiniStatText}>RAG + 记忆 + 上下文</Text>
-            </View>
-          </View>
-
-          <Text style={[styles.heroTitle, isTablet ? null : styles.heroTitleCompact]}>
-            只通过聊天，完成训练规划、饮食记录。
-          </Text>
-
-          <Text style={styles.heroDescription}>
-
-          </Text>
-
-          <View style={styles.ctaRow}>
-            <TouchableOpacity
-              activeOpacity={0.92}
-              style={allowDownload ? styles.primaryButton : styles.primaryButtonDisabled}
-              onPress={() => {
-                if (Platform.OS === 'web') {
-                  window.open(effectiveDownloadUrl, '_blank', 'noopener,noreferrer');
-                }
-              }}
-            >
-              <Ionicons
-                name={allowDownload ? 'phone-portrait-outline' : 'qr-code-outline'}
-                size={18}
-                color="#07111E"
-              />
-              <Text style={styles.primaryButtonText}>{downloadLabel}</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              activeOpacity={0.92}
-              style={styles.secondaryButton}
-              onPress={() => window.location.assign('/coach')}
-            >
-              <Ionicons name="chatbubble-ellipses-outline" size={18} color="#EAF2FF" />
-              <Text style={styles.secondaryButtonText}>体验网页版</Text>
-            </TouchableOpacity>
-          </View>
-
-          <Text style={styles.downloadHint}>
-            {allowDownload ? '测试包下载与网页版入口分离，方便演示与移动端体验。' : APP_DOWNLOAD_HINT}
-          </Text>
-
-          {!!healthResult && (
-            <View style={styles.healthStatusCard}>
-              <Ionicons name="server-outline" size={16} color="#72B7FF" />
-              <Text style={styles.healthStatusText}>{healthResult}</Text>
-            </View>
-          )}
-        </View>
-
-        <View style={styles.featureGrid}>
-          {FEATURE_CARDS.map((card) => (
-            <View key={card.title} style={styles.featureCard}>
-              <Text style={styles.featureLabel}>{card.label}</Text>
-              <Text style={styles.featureTitle}>{card.title}</Text>
-              <Text style={styles.featureBody}>{card.body}</Text>
-            </View>
-          ))}
-        </View>
-
-        <View style={styles.ragSection}>
-          <View style={styles.ragSectionHeader}>
-            <View>
-              <Text style={styles.ragEyebrow}>RAG 知识库测试</Text>
-            </View>
-            <Text style={styles.ragLimitText}>每 5 分钟最多 10 次</Text>
-          </View>
-
-          <Text style={styles.ragDescription}>
-            这里走的是项目当前专家模式使用的知识库链路：runtime artifact + Qdrant 向量检索 + BM25 关键词召回 +
-            本地融合重排。
-          </Text>
-
-          <View style={styles.ragComposer}>
-            <TextInput
-              multiline
-              value={ragQuery}
-              onChangeText={setRagQuery}
-              placeholder="输入一个训练、恢复、营养相关的问题"
-              placeholderTextColor="#7488A5"
-              style={styles.ragInput}
+          <View style={styles.headerNav}>
+            <HeaderButton
+              label={healthLoading ? '检查中' : '服务器健康'}
+              icon="pulse-outline"
+              onPress={handleHealthCheck}
+              textColor={textPrimary}
             />
+            <HeaderButton
+              label="体验网页版"
+              icon="open-outline"
+              onPress={() => router.push('/coach')}
+              textColor={textPrimary}
+            />
+            <HeaderButton
+              icon={isDark ? 'sunny-outline' : 'moon-outline'}
+              onPress={toggleTheme}
+              textColor={textPrimary}
+            />
+          </View>
+        </View>
 
-            <TouchableOpacity
-              activeOpacity={0.92}
-              style={[styles.ragSubmitButton, ragLoading ? styles.ragSubmitButtonDisabled : null]}
-              disabled={ragLoading}
-              onPress={handleRagTest}
-            >
-              {ragLoading ? (
-                <ActivityIndicator size="small" color="#05111D" />
-              ) : (
-                <Ionicons name="search-outline" size={16} color="#05111D" />
-              )}
-              <Text style={styles.ragSubmitText}>测试知识库</Text>
-            </TouchableOpacity>
+        <View style={styles.main}>
+          <View style={styles.heroSection}>
+            <View style={styles.heroBadge}>
+              <Text style={styles.heroBadgeText}>对话型训练、饮食、记忆闭环</Text>
+            </View>
+
+            <Text style={[styles.heroTitle, isMobile ? styles.heroTitleMobile : null]}>
+              只通过聊天，完成训练规划、饮食记录。
+            </Text>
+
+            <View style={[styles.heroActions, isMobile ? styles.heroActionsMobile : null]}>
+              <Pressable
+                onPress={() => openExternal(APK_DOWNLOAD_URL)}
+                style={({ hovered, pressed }) => [
+                  styles.downloadButton,
+                  {
+                    opacity: pressed ? 0.92 : 1,
+                    backgroundColor: hovered ? '#ffffff' : '#cde5ff',
+                  },
+                ]}
+              >
+                <Ionicons name="download-outline" size={20} color="#001f2a" />
+                <Text style={styles.downloadButtonText}>下载 APP</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={() => router.push('/coach')}
+                style={({ hovered, pressed }) => [
+                  styles.glassButton,
+                  styles.heroGlassButton,
+                  {
+                    opacity: pressed ? 0.92 : 1,
+                    backgroundColor: hovered ? 'rgba(255,255,255,0.1)' : 'rgba(255,255,255,0.03)',
+                  },
+                ]}
+              >
+                <Ionicons name="chatbubble-ellipses-outline" size={20} color="#FFFFFF" />
+                <Text style={styles.heroGlassButtonText}>体验网页版</Text>
+              </Pressable>
+            </View>
+
+            {!!healthResult && (
+              <View style={styles.healthStatus}>
+                <Ionicons name="server-outline" size={16} color="#8ddcff" />
+                <Text style={styles.healthStatusText}>{healthResult}</Text>
+              </View>
+            )}
           </View>
 
-          {!!ragError && (
-            <View style={styles.errorCard}>
-              <Ionicons name="alert-circle-outline" size={18} color="#FFB3A7" />
-              <Text style={styles.errorCardText}>{ragError}</Text>
-            </View>
-          )}
+          <View style={[styles.featureGrid, isMobile ? styles.featureGridMobile : null]}>
+            {FEATURE_CARDS.map((card) => (
+              <View key={card.title} style={styles.featureCard}>
+                <View style={styles.featureCardTop}>
+                  <Text style={styles.featureCardEyebrow}>{card.title}</Text>
+                  <Ionicons name={card.icon as any} size={18} color={textMuted} />
+                </View>
+                <Text style={styles.featureCardTitle}>{card.bodyTitle}</Text>
+                <Text style={styles.featureCardBody}>{card.body}</Text>
+              </View>
+            ))}
+          </View>
 
-          {!!ragResult && (
-            <View style={styles.ragResultShell}>
-              <View style={styles.ragResultHeader}>
-                <Text style={styles.ragResultTitle}>知识库回答</Text>
-                <Text style={styles.ragResultMeta}>
-                  {ragResult.retrieval_mode} · {ragResult.hit_count} hits
+          <View style={styles.ragSection}>
+            <View style={[styles.ragHeader, isMobile ? styles.ragHeaderMobile : null]}>
+              <View style={styles.ragHeaderMain}>
+                <Text style={styles.ragTitle}>RAG 知识库测试</Text>
+                <Text style={styles.ragDesc}>
+                  这里里的项目目前探索模式使用的知识库链路：runtime artifact + Qdrant 向量检索 + BM25 关键词召回 + 本地融合重排。
                 </Text>
               </View>
+              <Text style={styles.ragLimit}>需 5 分钟最多 10 次</Text>
+            </View>
 
-              <Text style={ragResult.answer ? styles.ragAnswer : styles.ragAnswerMuted}>
-                {ragResult.answer || '本次未生成总结回答，下面展示召回到的证据片段。'}
-              </Text>
+            <View style={[styles.ragComposer, isMobile ? styles.ragComposerMobile : null]}>
+              <TextInput
+                value={ragQuery}
+                onChangeText={setRagQuery}
+                placeholder="DOMS 延迟性肌肉酸痛到底是什么，应该怎么恢复？"
+                placeholderTextColor={textSecondary}
+                style={styles.ragInput}
+                multiline={!isMobile}
+              />
+              <Pressable
+                onPress={handleRagTest}
+                disabled={ragLoading}
+                style={({ hovered, pressed }) => [
+                  styles.ragSend,
+                  {
+                    opacity: ragLoading ? 0.7 : pressed ? 0.92 : 1,
+                    backgroundColor: hovered ? 'rgba(141,220,255,0.2)' : 'rgba(141,220,255,0.1)',
+                  },
+                ]}
+              >
+                {ragLoading ? (
+                  <ActivityIndicator size="small" color="#8ddcff" />
+                ) : (
+                  <Ionicons name="paper-plane-outline" size={18} color="#8ddcff" />
+                )}
+              </Pressable>
+            </View>
 
-              {ragResult.llm_degraded && (
-                <View style={styles.degradedNotice}>
-                  <Ionicons name="warning-outline" size={16} color="#F9DEA6" />
-                  <Text style={styles.degradedNoticeText}>
-                    本次回答降级为检索结果展示。原因：{ragResult.llm_error || 'LLM 不可用'}
+            {!!ragError && (
+              <View style={styles.noticeBox}>
+                <Ionicons name="alert-circle-outline" size={16} color="#ffb4b4" />
+                <Text style={styles.noticeText}>{ragError}</Text>
+              </View>
+            )}
+
+            {!!ragResult && (
+              <View style={styles.resultBlock}>
+                <View style={styles.resultTop}>
+                  <Text style={styles.resultTitle}>回答摘要</Text>
+                  <Text style={styles.resultMeta}>
+                    {ragResult.retrieval_mode} · {ragResult.hit_count} hits
                   </Text>
                 </View>
-              )}
 
-              {!!ragResult.sources?.length && (
-                <View style={styles.sourceList}>
-                  {ragResult.sources.map((source) => (
-                    <View key={source} style={styles.sourceChip}>
-                      <Text style={styles.sourceChipText}>{source}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
+                <Text style={styles.resultAnswer}>
+                  {ragResult.answer || '本次未生成总结答案，下方展示检索到的证据片段。'}
+                </Text>
 
-              {!!ragResult.hits?.length && (
-                <View style={styles.hitList}>
-                  {ragResult.hits.map((hit, index) => (
-                    <View key={`${hit.title}-${index}`} style={styles.hitCard}>
-                      <View style={styles.hitCardTop}>
-                        <Text style={styles.hitCardTitle}>{hit.title}</Text>
-                        <Text style={styles.hitCardScore}>{hit.score.toFixed(2)}</Text>
+                {ragResult.llm_degraded ? (
+                  <View style={styles.noticeBox}>
+                    <Ionicons name="warning-outline" size={16} color="#f9dea6" />
+                    <Text style={styles.noticeText}>
+                      本次回答降级为检索结果展示。原因：{ragResult.llm_error || 'LLM 不可用'}
+                    </Text>
+                  </View>
+                ) : null}
+
+                {!!ragResult.hits?.length && (
+                  <View style={styles.hitList}>
+                    {ragResult.hits.map((hit, index) => (
+                      <View key={`${hit.title}-${index}`} style={styles.hitCard}>
+                        <View style={styles.hitTop}>
+                          <Text style={styles.hitTitle}>{hit.title}</Text>
+                          <Text style={styles.hitScore}>{hit.score.toFixed(2)}</Text>
+                        </View>
+                        <Text style={styles.hitMeta}>
+                          {formatSourceMeta(hit)} · {hit.source_type} · {hit.score_type}
+                        </Text>
+                        <Text style={styles.hitPreview}>{hit.preview}</Text>
                       </View>
-                      <Text style={styles.hitCardMeta}>
-                        {formatSourceMeta(hit)} · {hit.source_type} · {hit.score_type}
-                      </Text>
-                      <Text style={styles.hitCardPreview}>{hit.preview}</Text>
-                    </View>
-                  ))}
-                </View>
-              )}
-            </View>
-          )}
+                    ))}
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
         </View>
       </View>
     </ScrollView>
@@ -329,519 +354,467 @@ export default function WebEntryPage() {
 const styles = StyleSheet.create({
   page: {
     flex: 1,
-    backgroundColor: '#08101A',
+    backgroundColor: '#0e0e10',
   },
-  pageContent: {
-    paddingHorizontal: 20,
-    paddingTop: 28,
-    paddingBottom: 48,
+  pageScrollContent: {
+    minHeight: '100%',
   },
-  shell: {
+  backgroundWaves: {
+    ...StyleSheet.absoluteFillObject,
+    overflow: 'hidden',
+    backgroundColor: '#0e0e10',
+  },
+  ambientBandOne: {
+    position: 'absolute',
+    top: 250,
+    left: -180,
+    width: 1700,
+    height: 120,
+    borderRadius: 999,
+    backgroundColor: 'rgba(205,229,255,0.18)',
+    opacity: 0.35,
+    transform: [{ rotate: '-7deg' }],
+    filter: 'blur(48px)',
+  } as any,
+  ambientBandTwo: {
+    position: 'absolute',
+    top: 360,
+    left: -60,
+    width: 1820,
+    height: 100,
+    borderRadius: 999,
+    backgroundColor: 'rgba(130,209,243,0.2)',
+    opacity: 0.28,
+    transform: [{ rotate: '-6deg' }],
+    filter: 'blur(42px)',
+  } as any,
+  wavePrimary: {
+    position: 'absolute',
+    top: 330,
+    left: -120,
+    width: 1680,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(255,255,255,0.72)',
+    boxShadow: '0 0 25px rgba(130, 209, 243, 0.5)',
+    transform: [{ rotate: '-4deg' }],
+  } as any,
+  waveSecondary: {
+    position: 'absolute',
+    top: 360,
+    left: -120,
+    width: 1680,
+    height: 6,
+    borderRadius: 999,
+    backgroundColor: 'rgba(141,220,255,0.78)',
+    boxShadow: '0 0 40px rgba(205, 229, 255, 0.3)',
+    transform: [{ rotate: '-4deg' }],
+  } as any,
+  waveAccentOne: {
+    position: 'absolute',
+    top: 430,
+    left: 260,
+    width: 700,
+    height: 5,
+    borderRadius: 999,
+    backgroundColor: 'rgba(141,220,255,0.36)',
+    transform: [{ rotate: '-12deg' }],
+  } as any,
+  waveAccentTwo: {
+    position: 'absolute',
+    top: 470,
+    left: 360,
+    width: 720,
+    height: 8,
+    borderRadius: 999,
+    backgroundColor: 'rgba(141,220,255,0.22)',
+    transform: [{ rotate: '-12deg' }],
+  } as any,
+  overlayFade: {
+    position: 'absolute',
+    inset: 0,
+    backgroundColor: 'rgba(14,14,16,0.12)',
+  } as any,
+  pageShell: {
+    flex: 1,
     width: '100%',
+    maxWidth: 1376,
     alignSelf: 'center',
-    gap: 18,
+    paddingHorizontal: 24,
+    paddingTop: 0,
+    paddingBottom: 32,
+    zIndex: 2,
   },
-  navRow: {
-    minHeight: 74,
-    borderRadius: 24,
-    borderWidth: 0.5,
-    borderColor: 'rgba(126, 160, 221, 0.18)',
-    backgroundColor: 'rgba(8, 16, 27, 0.92)',
-    paddingHorizontal: 18,
-    paddingVertical: 14,
+  header: {
+    paddingTop: 40,
+    paddingBottom: 12,
     flexDirection: 'row',
-    flexWrap: 'wrap',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    gap: 20,
   },
-  brandRow: {
+  headerMobile: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  logoWrap: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 16,
   },
-  brandIcon: {
-    width: 54,
-    height: 54,
+  logoBadge: {
+    width: 48,
+    height: 48,
     borderRadius: 16,
-  },
-  brandName: {
-    color: '#F7FAFF',
-    fontSize: 18,
-    fontWeight: '800',
-  },
-  brandMeta: {
-    marginTop: 3,
-    color: '#91A6C6',
-    fontSize: 12,
-  },
-  navActions: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
-    gap: 10,
-  },
-  themeButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    borderWidth: 0.5,
+    backgroundColor: '#ffffff',
     alignItems: 'center',
     justifyContent: 'center',
+    overflow: 'hidden',
+    boxShadow: '0 0 15px rgba(255,255,255,0.1)',
+  } as any,
+  logoImage: {
+    width: 28,
+    height: 28,
+    borderRadius: 8,
   },
-  themeButtonDark: {
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderColor: 'rgba(255,255,255,0.12)',
+  logoTitle: {
+    color: '#ffffff',
+    fontSize: 20,
+    fontWeight: '500',
+    letterSpacing: 0.4,
+    lineHeight: 22,
+    marginBottom: 6,
   },
-  themeButtonLight: {
-    backgroundColor: 'rgba(15,23,42,0.04)',
-    borderColor: 'rgba(15,23,42,0.10)',
+  logoMeta: {
+    color: '#585961',
+    fontSize: 11,
+    fontWeight: '500',
+    letterSpacing: 1.6,
+    textTransform: 'uppercase',
   },
-  navButton: {
-    height: 40,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: 'rgba(22, 42, 69, 0.96)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(121, 164, 231, 0.18)',
+  headerNav: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 16,
+    flexWrap: 'wrap',
   },
-  navButtonText: {
-    color: '#E8F2FF',
-    fontSize: 13,
-    fontWeight: '700',
-  },
-  ghostButton: {
-    height: 40,
-    paddingHorizontal: 14,
-    borderRadius: 20,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.12)',
+  glassButton: {
+    minHeight: 48,
+    paddingHorizontal: 24,
+    borderRadius: 999,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    justifyContent: 'center',
+    gap: 10,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.08)',
+    backdropFilter: 'blur(16px)',
+    WebkitBackdropFilter: 'blur(16px)',
+    transitionDuration: '180ms',
+  } as any,
+  headerButtonText: {
+    fontSize: 16,
+    fontWeight: '500',
   },
-  ghostButtonText: {
-    color: '#D8E6FF',
-    fontSize: 13,
-    fontWeight: '700',
+  main: {
+    flex: 1,
+    paddingTop: 80,
+    paddingBottom: 80,
   },
   heroSection: {
-    borderRadius: 34,
-    borderWidth: 0.5,
-    borderColor: 'rgba(132, 165, 230, 0.18)',
-    backgroundColor: 'rgba(8, 16, 28, 0.96)',
-    paddingHorizontal: 26,
-    paddingVertical: 28,
-    gap: 18,
-  },
-  heroTopRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
+    maxWidth: 1000,
+    alignSelf: 'center',
     alignItems: 'center',
-    gap: 10,
+    marginBottom: 128,
   },
   heroBadge: {
-    alignSelf: 'flex-start',
-    paddingHorizontal: 12,
-    paddingVertical: 7,
+    paddingHorizontal: 24,
+    paddingVertical: 10,
     borderRadius: 999,
-    backgroundColor: 'rgba(102, 201, 255, 0.12)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(102, 201, 255, 0.22)',
+    backgroundColor: 'rgba(255,255,255,0.02)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    marginBottom: 40,
   },
   heroBadgeText: {
-    color: '#8BD3FF',
-    fontSize: 12,
-    fontWeight: '700',
+    color: '#8E8E93',
+    fontSize: 14,
+    fontWeight: '500',
+    letterSpacing: 1.2,
   },
-  heroMiniStat: {
-    minHeight: 38,
-    paddingHorizontal: 12,
-    borderRadius: 18,
-    backgroundColor: 'rgba(255,255,255,0.04)',
-    borderWidth: 0.5,
+  heroTitle: {
+    color: '#ffffff',
+    fontSize: 56,
+    lineHeight: 64,
+    fontWeight: '300',
+    letterSpacing: 1.2,
+    textAlign: 'center',
+    marginBottom: 64,
+    textShadowColor: 'rgba(0, 0, 0, 0.4)',
+    textShadowOffset: { width: 0, height: 8 },
+    textShadowRadius: 32,
+  },
+  heroTitleMobile: {
+    fontSize: 36,
+    lineHeight: 44,
+    marginBottom: 36,
+  },
+  heroActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 24,
+    flexWrap: 'wrap',
+  },
+  heroActionsMobile: {
+    gap: 14,
+  },
+  downloadButton: {
+    minHeight: 56,
+    paddingHorizontal: 32,
+    borderRadius: 999,
+    backgroundColor: '#cde5ff',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    boxShadow: '0 0 24px rgba(205,229,255,0.3)',
+    transitionDuration: '180ms',
+  } as any,
+  downloadButtonText: {
+    color: '#001f2a',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  heroGlassButton: {
+    minHeight: 56,
+    paddingHorizontal: 32,
     borderColor: 'rgba(255,255,255,0.1)',
+  },
+  heroGlassButtonText: {
+    color: '#ffffff',
+    fontSize: 16,
+    fontWeight: '500',
+  },
+  healthStatus: {
+    marginTop: 24,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-  },
-  heroMiniStatText: {
-    color: '#C7D8F1',
-    fontSize: 12,
-    fontWeight: '600',
-  },
-  heroTitle: {
-    color: '#F6FAFF',
-    fontSize: 48,
-    lineHeight: 58,
-    fontWeight: '900',
-    maxWidth: 940,
-  },
-  heroTitleCompact: {
-    fontSize: 36,
-    lineHeight: 46,
-  },
-  heroDescription: {
-    color: '#B4C3D8',
-    fontSize: 16,
-    lineHeight: 27,
-    maxWidth: 980,
-  },
-  heroBulletList: {
-    gap: 12,
-  },
-  heroBullet: {
-    flexDirection: 'row',
-    alignItems: 'flex-start',
-    gap: 10,
-  },
-  heroBulletText: {
-    flex: 1,
-    color: '#DDE7F5',
-    fontSize: 15,
-    lineHeight: 23,
-    fontWeight: '600',
-  },
-  ctaRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 12,
-    alignItems: 'center',
-  },
-  primaryButton: {
-    minHeight: 50,
-    paddingHorizontal: 18,
-    borderRadius: 16,
-    backgroundColor: '#8DDCFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-  },
-  primaryButtonDisabled: {
-    minHeight: 50,
-    paddingHorizontal: 18,
-    borderRadius: 16,
-    backgroundColor: '#8DDCFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-    opacity: 0.86,
-  },
-  primaryButtonText: {
-    color: '#07111E',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  secondaryButton: {
-    minHeight: 50,
-    paddingHorizontal: 18,
-    borderRadius: 16,
-    backgroundColor: 'rgba(255,255,255,0.06)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255,255,255,0.14)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 9,
-  },
-  secondaryButtonText: {
-    color: '#EAF2FF',
-    fontSize: 14,
-    fontWeight: '800',
-  },
-  downloadHint: {
-    color: '#8091AB',
-    fontSize: 12,
-    lineHeight: 18,
-  },
-  healthStatusCard: {
-    minHeight: 42,
-    borderRadius: 15,
-    backgroundColor: 'rgba(20, 33, 48, 0.92)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(114, 183, 255, 0.18)',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 10,
-    paddingHorizontal: 13,
+    paddingHorizontal: 14,
     paddingVertical: 10,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
   healthStatusText: {
-    flex: 1,
-    color: '#D7E6FA',
+    color: '#cde5ff',
     fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '600',
+    lineHeight: 18,
   },
   featureGrid: {
+    width: '100%',
+    maxWidth: 1240,
+    alignSelf: 'center',
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 14,
+    gap: 24,
+    marginBottom: 64,
+  },
+  featureGridMobile: {
+    flexDirection: 'column',
   },
   featureCard: {
     flex: 1,
-    minWidth: 280,
+    minHeight: 240,
+    padding: 32,
     borderRadius: 24,
-    borderWidth: 0.5,
-    borderColor: 'rgba(147, 178, 233, 0.14)',
-    backgroundColor: 'rgba(9, 18, 30, 0.88)',
-    padding: 18,
-    gap: 8,
-  },
-  featureLabel: {
-    color: '#7EC9FF',
-    fontSize: 11,
-    fontWeight: '800',
-  },
-  featureTitle: {
-    color: '#F4F8FF',
-    fontSize: 18,
-    lineHeight: 24,
-    fontWeight: '800',
-  },
-  featureBody: {
-    color: '#A9B8CD',
-    fontSize: 13,
-    lineHeight: 21,
-  },
-  infoBand: {
+    backgroundColor: 'rgba(22, 22, 24, 0.3)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+    gap: 24,
+  } as any,
+  featureCardTop: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 14,
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
   },
-  infoCard: {
-    flex: 1,
-    minWidth: 280,
-    borderRadius: 24,
-    borderWidth: 0.5,
-    borderColor: 'rgba(147, 178, 233, 0.14)',
-    backgroundColor: 'rgba(9, 18, 30, 0.88)',
-    padding: 18,
-    gap: 8,
+  featureCardEyebrow: {
+    color: '#8ddcff',
+    fontSize: 12,
+    fontWeight: '500',
+    letterSpacing: 2.2,
+    textTransform: 'uppercase',
   },
-  infoCardLabel: {
-    color: '#7EC9FF',
-    fontSize: 11,
-    fontWeight: '800',
+  featureCardTitle: {
+    color: '#ffffff',
+    fontSize: 20,
+    lineHeight: 30,
+    fontWeight: '300',
+    letterSpacing: 0.4,
   },
-  infoCardTitle: {
-    color: '#F4F8FF',
-    fontSize: 18,
+  featureCardBody: {
+    color: '#8E8E93',
+    fontSize: 14,
     lineHeight: 24,
-    fontWeight: '800',
-  },
-  infoCardBody: {
-    color: '#A8B7CB',
-    fontSize: 13,
-    lineHeight: 21,
+    fontWeight: '300',
   },
   ragSection: {
-    borderRadius: 28,
-    borderWidth: 0.5,
-    borderColor: 'rgba(150, 181, 234, 0.16)',
-    backgroundColor: 'rgba(8, 15, 24, 0.96)',
-    padding: 18,
-    gap: 14,
-  },
-  ragSectionHeader: {
+    width: '100%',
+    maxWidth: 1240,
+    alignSelf: 'center',
+    padding: 32,
+    borderRadius: 24,
+    backgroundColor: 'rgba(22, 22, 24, 0.3)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    backdropFilter: 'blur(12px)',
+    WebkitBackdropFilter: 'blur(12px)',
+  } as any,
+  ragHeader: {
     flexDirection: 'row',
-    flexWrap: 'wrap',
-    alignItems: 'center',
     justifyContent: 'space-between',
-    gap: 12,
+    alignItems: 'center',
+    gap: 24,
+    marginBottom: 24,
   },
-  ragEyebrow: {
-    color: '#7ED7FF',
-    fontSize: 11,
-    fontWeight: '800',
-    marginBottom: 4,
+  ragHeaderMobile: {
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+  },
+  ragHeaderMain: {
+    flex: 1,
+    gap: 10,
   },
   ragTitle: {
-    color: '#F5F8FD',
-    fontSize: 24,
-    lineHeight: 30,
-    fontWeight: '900',
+    color: '#ffffff',
+    fontSize: 15,
+    fontWeight: '500',
+    letterSpacing: 0.4,
   },
-  ragLimitText: {
-    color: '#90A6C7',
-    fontSize: 12,
-    fontWeight: '700',
+  ragDesc: {
+    color: '#8E8E93',
+    fontSize: 14,
+    lineHeight: 22,
   },
-  ragDescription: {
-    color: '#A8B8CE',
+  ragLimit: {
+    color: '#8E8E93',
     fontSize: 13,
-    lineHeight: 21,
-    maxWidth: 860,
   },
   ragComposer: {
-    borderRadius: 22,
-    borderWidth: 0.5,
-    borderColor: 'rgba(144, 177, 230, 0.16)',
-    backgroundColor: 'rgba(255,255,255,0.03)',
-    padding: 12,
-    gap: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 16,
+    paddingHorizontal: 20,
+    paddingVertical: 18,
+    borderRadius: 12,
+    backgroundColor: 'rgba(14,14,16,0.4)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.05)',
+    boxShadow: 'inset 0 1px 0 rgba(255,255,255,0.02)',
+  } as any,
+  ragComposerMobile: {
+    alignItems: 'stretch',
   },
   ragInput: {
-    minHeight: 76,
-    color: '#F1F6FF',
-    fontSize: 15,
-    lineHeight: 22,
-    paddingHorizontal: 4,
-    paddingVertical: 4,
-    textAlignVertical: 'top',
-    ...(Platform.OS === 'web' ? ({ outlineStyle: 'none' } as any) : {}),
-  },
-  ragSubmitButton: {
-    alignSelf: 'flex-start',
-    minHeight: 40,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: '#7FDBFF',
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  ragSubmitButtonDisabled: {
-    opacity: 0.72,
-  },
-  ragSubmitText: {
-    color: '#05111D',
-    fontSize: 13,
-    fontWeight: '800',
-  },
-  errorCard: {
-    borderRadius: 16,
-    backgroundColor: 'rgba(74, 28, 24, 0.45)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(255, 145, 128, 0.22)',
-    paddingHorizontal: 13,
-    paddingVertical: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-  },
-  errorCardText: {
     flex: 1,
-    color: '#FFD5CC',
-    fontSize: 13,
-    lineHeight: 19,
-    fontWeight: '600',
-  },
-  ragResultShell: {
-    gap: 12,
-    borderRadius: 22,
-    borderWidth: 0.5,
-    borderColor: 'rgba(141, 171, 226, 0.14)',
-    backgroundColor: 'rgba(13, 21, 31, 0.94)',
-    padding: 14,
-  },
-  ragResultHeader: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    gap: 8,
-    alignItems: 'center',
-  },
-  ragResultTitle: {
-    color: '#F3F7FE',
+    color: '#ffffff',
     fontSize: 15,
-    fontWeight: '800',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    minHeight: 28,
+    ...Platform.select({ web: { outlineStyle: 'none' } }),
+  } as any,
+  ragSend: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: 'rgba(141,220,255,0.2)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
   },
-  ragResultMeta: {
-    color: '#86A1C5',
-    fontSize: 12,
-    fontWeight: '700',
+  noticeBox: {
+    marginTop: 16,
+    flexDirection: 'row',
+    gap: 10,
+    alignItems: 'flex-start',
+    padding: 14,
+    borderRadius: 14,
+    backgroundColor: 'rgba(255,255,255,0.03)',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
   },
-  ragAnswer: {
-    color: '#EAF3FF',
-    fontSize: 14,
-    lineHeight: 23,
-    fontWeight: '600',
-  },
-  ragAnswerMuted: {
-    color: '#97AAC7',
+  noticeText: {
+    flex: 1,
+    color: '#e5e1e4',
     fontSize: 13,
     lineHeight: 20,
-    fontWeight: '600',
   },
-  degradedNotice: {
-    borderRadius: 14,
-    backgroundColor: 'rgba(89, 69, 23, 0.28)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(245, 201, 122, 0.18)',
-    paddingHorizontal: 12,
-    paddingVertical: 9,
+  resultBlock: {
+    marginTop: 20,
+    gap: 16,
+  },
+  resultTop: {
     flexDirection: 'row',
+    justifyContent: 'space-between',
     alignItems: 'center',
-    gap: 8,
+    gap: 12,
+    flexWrap: 'wrap',
   },
-  degradedNoticeText: {
-    flex: 1,
-    color: '#F9DEA6',
-    fontSize: 12,
-    lineHeight: 18,
+  resultTitle: {
+    color: '#ffffff',
+    fontSize: 16,
     fontWeight: '600',
   },
-  sourceList: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    gap: 8,
+  resultMeta: {
+    color: '#8E8E93',
+    fontSize: 12,
   },
-  sourceChip: {
-    borderRadius: 999,
-    backgroundColor: 'rgba(114, 183, 255, 0.1)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(114, 183, 255, 0.16)',
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-  },
-  sourceChipText: {
-    color: '#CFE3FF',
-    fontSize: 11,
-    lineHeight: 15,
-    fontWeight: '700',
+  resultAnswer: {
+    color: '#e5e1e4',
+    fontSize: 15,
+    lineHeight: 24,
   },
   hitList: {
-    gap: 10,
+    gap: 12,
   },
   hitCard: {
+    padding: 16,
     borderRadius: 18,
     backgroundColor: 'rgba(255,255,255,0.03)',
-    borderWidth: 0.5,
-    borderColor: 'rgba(140, 171, 224, 0.12)',
-    padding: 12,
-    gap: 6,
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.06)',
+    gap: 8,
   },
-  hitCardTop: {
+  hitTop: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     gap: 10,
   },
-  hitCardTitle: {
+  hitTitle: {
     flex: 1,
-    color: '#F1F6FF',
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  hitScore: {
+    color: '#8ddcff',
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  hitMeta: {
+    color: '#8E8E93',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+  hitPreview: {
+    color: '#e5e1e4',
     fontSize: 13,
-    fontWeight: '800',
-  },
-  hitCardScore: {
-    color: '#7DC9FF',
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  hitCardMeta: {
-    color: '#92A8C5',
-    fontSize: 11,
-    lineHeight: 16,
-    fontWeight: '700',
-  },
-  hitCardPreview: {
-    color: '#C2D2E6',
-    fontSize: 12,
-    lineHeight: 19,
+    lineHeight: 20,
   },
 });

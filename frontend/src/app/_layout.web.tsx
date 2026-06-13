@@ -1,4 +1,5 @@
 import { Stack } from 'expo-router';
+import { Platform } from 'react-native';
 
 import { AnimatedSplashOverlay } from '@/components/animated-icon';
 import { AuthProvider } from '@/contexts/AuthContext';
@@ -24,7 +25,7 @@ export default function WebRootLayout() {
     <ThemeProvider>
       <AuthProvider>
         <PlanProvider>
-          <AnimatedSplashOverlay />
+          {Platform.OS !== 'web' ? <AnimatedSplashOverlay /> : null}
           <WebRootStack />
         </PlanProvider>
       </AuthProvider>

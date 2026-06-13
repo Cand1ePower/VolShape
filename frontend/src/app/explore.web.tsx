@@ -76,17 +76,16 @@ export default function ExploreScreen() {
 
   const insets = { ...safeAreaInsets, bottom: safeAreaInsets.bottom + BottomTabInset + Spacing.three };
   const isSmallScreen = width < 375;
-  const [isWebMounted, setIsWebMounted] = useState(Platform.OS !== 'web');
   const isWeb = Platform.OS === 'web';
-  const isDesktopWeb = isWebMounted && isWeb && width >= 1100;
+  const isDesktopWeb = isWeb && width >= 1100;
   const dynamicPadding = isSmallScreen ? 14 : 18;
-  const contentMaxWidth = isDesktopWeb ? 1040 : MaxContentWidth;
+  const contentMaxWidth = isDesktopWeb ? 1160 : MaxContentWidth;
 
-  const bgCol = isDark ? '#000000' : '#F2F2F7';
-  const cardBg = isDark ? '#1C1C1E' : '#FFFFFF';
-  const borderCol = isDark ? '#2C2C2E' : '#E5E5EA';
-  const textCol = isDark ? '#FFFFFF' : '#000000';
-  const subTextCol = isDark ? '#AEAEB2' : '#8E8E93';
+  const bgCol = isDark ? '#06080D' : '#F4F7FB';
+  const cardBg = isDark ? 'rgba(15,18,27,0.9)' : 'rgba(255,255,255,0.95)';
+  const borderCol = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
+  const textCol = isDark ? '#F8FAFC' : '#0F172A';
+  const subTextCol = isDark ? '#94A3B8' : '#64748B';
 
   // Login modal
   const [loginModalVisible, setLoginModalVisible] = useState(false);
@@ -209,12 +208,6 @@ export default function ExploreScreen() {
 
   // Automatically fetch metrics and profile in background when logged in
   useEffect(() => {
-    if (Platform.OS === 'web') {
-      setIsWebMounted(true);
-    }
-  }, []);
-
-  useEffect(() => {
     if (isLoggedIn) {
       loadProfileSnapshot();
     } else {
@@ -232,12 +225,12 @@ export default function ExploreScreen() {
 
   return (
     <ScrollView style={{ backgroundColor: bgCol }} contentInset={insets} contentContainerStyle={[styles.scrollContent, {
-      paddingTop: isDesktopWeb ? Spacing.four : 68,
+      paddingTop: isDesktopWeb ? 40 : 68,
       paddingBottom: insets.bottom,
-      paddingHorizontal: isDesktopWeb ? 28 : Spacing.four,
+      paddingHorizontal: isDesktopWeb ? 32 : Spacing.four,
     }]}>
       <View style={[styles.container, { maxWidth: contentMaxWidth }]}>
-        <View style={[styles.header, !isDesktopWeb && { paddingLeft: 140 }]}>
+        <View style={styles.header}>
           <Text style={[styles.headerTitle, { color: textCol }]}>我的</Text>
           <Text style={[styles.headerSubtitle, { color: subTextCol }]}>账号 · 记忆 · 数据</Text>
         </View>
@@ -644,49 +637,57 @@ export default function ExploreScreen() {
 
 const styles = StyleSheet.create({
   scrollContent: { paddingHorizontal: Spacing.four },
-  container: { maxWidth: MaxContentWidth, alignSelf: 'center', width: '100%', gap: Spacing.four },
-  header: { marginTop: Spacing.two, marginBottom: Spacing.two },
-  headerTitle: { fontWeight: 'bold', fontSize: 24 },
-  headerSubtitle: { fontSize: 13, marginTop: 4 },
-  card: { borderRadius: 14, borderWidth: 0.5, shadowColor: '#000', shadowOffset: { width: 0, height: 3 }, shadowOpacity: 0.05, shadowRadius: 8, elevation: 1 },
-  cardTitle: { fontWeight: 'bold', fontSize: 14, marginBottom: 8 },
+  container: { maxWidth: MaxContentWidth, alignSelf: 'center', width: '100%', gap: 18 },
+  header: { marginBottom: 4 },
+  headerTitle: { fontWeight: '800', fontSize: 32, letterSpacing: -0.9 },
+  headerSubtitle: { fontSize: 14, marginTop: 6 },
+  card: {
+    borderRadius: 26,
+    borderWidth: 1,
+    shadowColor: '#0F172A',
+    shadowOffset: { width: 0, height: 18 },
+    shadowOpacity: 0.08,
+    shadowRadius: 36,
+    elevation: 2,
+  },
+  cardTitle: { fontWeight: '800', fontSize: 16, marginBottom: 10, letterSpacing: -0.3 },
   // Account
   accountRow: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   accountActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   acLabel: { fontSize: 10, marginBottom: 3 },
-  acId: { fontSize: 11, fontWeight: '600', fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }), marginBottom: 6 },
+  acId: { fontSize: 12, fontWeight: '700', fontFamily: Platform.select({ ios: 'CourierNewPSMT', android: 'monospace', web: 'monospace' }), marginBottom: 6 },
   acMeta: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   statusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 5 },
   statusBadgeText: { fontSize: 9, fontWeight: '700' },
   acMetaText: { fontSize: 9 },
-  loginBtn: { backgroundColor: '#007AFF', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 },
-  loginBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
-  upgradeBtn: { backgroundColor: '#007AFF', paddingVertical: 8, paddingHorizontal: 12, borderRadius: 10 },
-  upgradeBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 12 },
-  logoutBtn: { backgroundColor: 'rgba(255,59,48,0.08)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.2)', paddingVertical: 8, paddingHorizontal: 14, borderRadius: 10 },
+  loginBtn: { backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 16, borderRadius: 14 },
+  loginBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
+  upgradeBtn: { backgroundColor: '#3B82F6', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 14 },
+  upgradeBtnText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
+  logoutBtn: { backgroundColor: 'rgba(255,59,48,0.08)', borderWidth: 1, borderColor: 'rgba(255,59,48,0.2)', paddingVertical: 10, paddingHorizontal: 14, borderRadius: 14 },
   logoutBtnText: { color: '#FF3B30', fontWeight: '700', fontSize: 12 },
   // Memory
   memHeaderRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 },
-  viewMemBtn: { paddingVertical: 5, paddingHorizontal: 10, borderRadius: 6, backgroundColor: 'rgba(0,122,255,0.06)' },
-  viewMemBtnText: { color: '#007AFF', fontSize: 11, fontWeight: '600' },
-  memDesc: { fontSize: 11, lineHeight: 18 },
+  viewMemBtn: { paddingVertical: 8, paddingHorizontal: 12, borderRadius: 999, backgroundColor: 'rgba(59,130,246,0.08)' },
+  viewMemBtnText: { color: '#3B82F6', fontSize: 12, fontWeight: '700' },
+  memDesc: { fontSize: 12, lineHeight: 20 },
   planSubtitle: { fontSize: 11, lineHeight: 16 },
-  quotaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  quotaItem: { flex: 1, minWidth: '44%', padding: 10, backgroundColor: 'rgba(88,86,214,0.05)', borderRadius: 9 },
+  quotaGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 14 },
+  quotaItem: { flex: 1, minWidth: '44%', padding: 12, backgroundColor: 'rgba(88,86,214,0.05)', borderRadius: 14 },
   quotaVal: { fontWeight: '800', fontSize: 14, marginTop: 3 },
   // Stats
-  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  statItem: { flex: 1, minWidth: '44%', padding: 8, backgroundColor: 'rgba(0,122,255,0.03)', borderRadius: 8 },
+  statGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  statItem: { flex: 1, minWidth: '44%', padding: 12, backgroundColor: 'rgba(59,130,246,0.05)', borderRadius: 14 },
   statLabel: { fontSize: 9, color: '#8E8E93', marginBottom: 2 },
   statVal: { fontWeight: 'bold', fontSize: 15 },
   statUnit: { fontSize: 11, color: '#8E8E93', fontWeight: 'normal' },
-  nutritionDetailCard: { marginTop: 12, borderRadius: 12, padding: 12 },
+  nutritionDetailCard: { marginTop: 14, borderRadius: 18, padding: 14 },
   nutritionDetailHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', gap: 8 },
   nutritionDetailTitle: { fontSize: 13, fontWeight: '800' },
   nutritionMealType: { fontSize: 11, fontWeight: '600' },
   nutritionFoods: { marginTop: 6, fontSize: 11, lineHeight: 17 },
   nutritionMacroRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 12 },
-  nutritionMacroItem: { flex: 1, minWidth: '44%', padding: 10, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.04)' },
+  nutritionMacroItem: { flex: 1, minWidth: '44%', padding: 12, borderRadius: 14, backgroundColor: 'rgba(255,255,255,0.04)' },
   nutritionMacroValue: { fontSize: 14, fontWeight: '800', marginTop: 2 },
   // Modals
   modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', justifyContent: 'center', alignItems: 'center', padding: 24 },
@@ -705,7 +706,7 @@ const styles = StyleSheet.create({
   authSwitchText: { fontSize: 12, fontWeight: '700' },
   plansModal: { width: '100%', maxWidth: 680, maxHeight: '84%', borderRadius: 24, borderWidth: 0.5, overflow: 'hidden' },
   planList: { padding: 16, gap: 12 },
-  planCard: { borderWidth: 1, borderRadius: 14, padding: 14, gap: 12 },
+  planCard: { borderWidth: 1, borderRadius: 20, padding: 16, gap: 12 },
   planTopRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12 },
   planTitle: { fontSize: 18, fontWeight: '800' },
   planPrice: { fontSize: 18, fontWeight: '900' },

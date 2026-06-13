@@ -22,7 +22,11 @@ frontend/dist/
 frontend/node_modules/
 frontend/.expo/
 frontend/dist/
+frontend/dist-*/
 frontend/dist-*.tar.gz
+frontend/*.tar
+frontend/icon-header-64.png
+frontend/assets/images/icon-header-64.png
 frontend/web-build/
 frontend/.env
 frontend/.env.*

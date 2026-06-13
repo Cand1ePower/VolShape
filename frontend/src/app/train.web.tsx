@@ -161,12 +161,11 @@ export default function TrainScreen() {
   const isDark = scheme === 'dark';
   const insets = useSafeAreaInsets();
   const { width } = useWindowDimensions();
-  const [isWebMounted, setIsWebMounted] = React.useState(Platform.OS !== 'web');
   const { activePlan, completedExercises, toggleComplete, completePlan, resetPlan, trainingHistory } = usePlan();
   const { token } = useAuth();
   const isWeb = Platform.OS === 'web';
-  const isDesktopWeb = isWebMounted && isWeb && width >= 1100;
-  const contentMaxWidth = isDesktopWeb ? 1040 : 820;
+  const isDesktopWeb = isWeb && width >= 1100;
+  const contentMaxWidth = isDesktopWeb ? 1160 : 820;
 
   // History detail inline expanded state (Accordion Mode)
   const [expandedPlanIdx, setExpandedPlanIdx] = React.useState<number | null>(null);
@@ -226,11 +225,11 @@ export default function TrainScreen() {
     }
   };
 
-  const bgCol = isDark ? '#0A0A0C' : '#F5F5F7';
-  const cardBg = isDark ? '#1C1C1E' : '#FFFFFF';
-  const borderCol = isDark ? '#2C2C2E' : '#E5E5EA';
-  const textCol = isDark ? '#FFFFFF' : '#1C1C1E';
-  const subTextCol = isDark ? '#AEAEB2' : '#8E8E93';
+  const bgCol = isDark ? '#06080D' : '#F4F7FB';
+  const cardBg = isDark ? 'rgba(15,18,27,0.9)' : 'rgba(255,255,255,0.95)';
+  const borderCol = isDark ? 'rgba(255,255,255,0.08)' : 'rgba(15,23,42,0.08)';
+  const textCol = isDark ? '#F8FAFC' : '#0F172A';
+  const subTextCol = isDark ? '#94A3B8' : '#64748B';
   const accentCol = '#007AFF';
   const successCol = '#34C759';
 
@@ -239,12 +238,6 @@ export default function TrainScreen() {
   const progress = totalSets > 0 ? completedCount / totalSets : 0;
 
   const hasHistory = trainingHistory.length > 0;
-
-  React.useEffect(() => {
-    if (Platform.OS === 'web') {
-      setIsWebMounted(true);
-    }
-  }, []);
 
   if (!activePlan && !hasHistory) {
     return (
@@ -266,9 +259,9 @@ export default function TrainScreen() {
         contentContainerStyle={[
           styles.scrollContent,
           {
-            paddingTop: isDesktopWeb ? (insets.top + 16) : 68,
+            paddingTop: isDesktopWeb ? (insets.top + 32) : 68,
             paddingBottom: insets.bottom + 120,
-            paddingHorizontal: isDesktopWeb ? 28 : 16,
+            paddingHorizontal: isDesktopWeb ? 32 : 16,
           },
         ]}
         contentInsetAdjustmentBehavior="automatic"
@@ -277,8 +270,8 @@ export default function TrainScreen() {
         {/* Active Plan */}
         {activePlan && (
           <View style={styles.section}>
-            <Text style={[styles.sectionTitle, { color: textCol }, !isDesktopWeb && { paddingLeft: 140 }]}>当前训练</Text>
-            <View style={[styles.header, !isDesktopWeb && { paddingLeft: 140 }]}>
+            <Text style={[styles.sectionTitle, { color: textCol }]}>当前训练</Text>
+            <View style={styles.header}>
               <Text style={[styles.title, { color: textCol }]}>{activePlan.title}</Text>
               {activePlan.disclaimer && (
                 <View style={[styles.disclaimerBox, { backgroundColor: 'rgba(255, 149, 0, 0.1)' }]}>
@@ -350,7 +343,7 @@ export default function TrainScreen() {
         {/* Training History Timeline */}
         {hasHistory && (
           <View style={styles.section}>
-            <View style={[styles.historyTitleRow, !isDesktopWeb && { paddingLeft: 140 }]}>
+            <View style={styles.historyTitleRow}>
               <Text style={[styles.sectionTitle, { color: textCol, marginBottom: 0 }]}>训练历史</Text>
               <TouchableOpacity 
                 activeOpacity={0.7} 
@@ -437,16 +430,16 @@ const styles = StyleSheet.create({
   container: { flex: 1 },
   scrollContent: { paddingHorizontal: 16 },
   pageFrame: { width: '100%', alignSelf: 'center' },
-  section: { marginBottom: 18 },
-  sectionTitle: { fontSize: 16, fontWeight: '800', marginBottom: 10, letterSpacing: -0.4 },
-  header: { marginBottom: 14 },
-  title: { fontSize: 20, fontWeight: '800', letterSpacing: -0.6, marginBottom: 8 },
-  disclaimerBox: { borderRadius: 8, padding: 10, marginBottom: 10 },
+  section: { marginBottom: 24 },
+  sectionTitle: { fontSize: 18, fontWeight: '800', marginBottom: 12, letterSpacing: -0.5 },
+  header: { marginBottom: 18 },
+  title: { fontSize: 28, fontWeight: '800', letterSpacing: -0.9, marginBottom: 10 },
+  disclaimerBox: { borderRadius: 14, padding: 12, marginBottom: 12 },
   disclaimerText: { fontSize: 11, fontWeight: '600', lineHeight: 16 },
   progressBar: { height: 6, borderRadius: 3, marginBottom: 6, overflow: 'hidden' },
   progressFill: { height: '100%', borderRadius: 3 },
   progressText: { fontSize: 12, fontWeight: '600' },
-  exerciseCard: { borderRadius: 12, borderWidth: 0.5, padding: 12, marginBottom: 10 },
+  exerciseCard: { borderRadius: 22, borderWidth: 1, padding: 16, marginBottom: 12, shadowColor: '#0F172A', shadowOffset: { width: 0, height: 16 }, shadowOpacity: 0.06, shadowRadius: 30, elevation: 2 },
   exerciseHeader: { flexDirection: 'row', alignItems: 'center', gap: 10, marginBottom: 6 },
   exNum: { width: 24, height: 24, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   exNumText: { fontSize: 12, fontWeight: '700' },
@@ -458,9 +451,9 @@ const styles = StyleSheet.create({
   setChip: { borderWidth: 0.5, borderRadius: 8, paddingVertical: 6, paddingHorizontal: 10 },
   setChipText: { fontSize: 12, fontWeight: '600' },
   actionRow: { flexDirection: 'row', gap: 8, marginTop: 4 },
-  finishBtn: { flex: 1, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
+  finishBtn: { flex: 1, borderRadius: 16, paddingVertical: 14, alignItems: 'center' },
   finishBtnText: { color: '#FFFFFF', fontSize: 14, fontWeight: '700' },
-  cancelBtn: { borderRadius: 12, paddingVertical: 12, paddingHorizontal: 16, alignItems: 'center', borderWidth: 0.5 },
+  cancelBtn: { borderRadius: 16, paddingVertical: 14, paddingHorizontal: 18, alignItems: 'center', borderWidth: 1 },
   cancelBtnText: { fontSize: 13, fontWeight: '600' },
   emptyState: { flex: 1, justifyContent: 'center', alignItems: 'center', padding: 30 },
   emptyIcon: { fontSize: 40, marginBottom: 12 },
@@ -474,8 +467,8 @@ const styles = StyleSheet.create({
   timelineLine: { position: 'absolute', left: 13, top: 0, bottom: 0, width: 1.5 }, // 从 top: 0 直通 bottom: 0 贯穿
   timelineDot: { width: 10, height: 10, borderRadius: 5, marginTop: 18, zIndex: 2 },
   timelineRight: { flex: 1, paddingBottom: 12 }, // 通过右栏的 padding 维持卡片之间的呼吸间距，实现贯穿
-  historyCard: { borderRadius: 16, borderWidth: 0.5, overflow: 'hidden' },
-  historyContent: { padding: 14 },
+  historyCard: { borderRadius: 22, borderWidth: 1, overflow: 'hidden' },
+  historyContent: { padding: 16 },
   historyHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
   historyTitle: { fontSize: 14, fontWeight: '800', flex: 1 },
   historyBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6, marginLeft: 8 },
